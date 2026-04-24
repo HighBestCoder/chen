@@ -1,0 +1,64 @@
+# Local build path for environments without access to fit2cloud base images.
+# It rebuilds frontend/backend artifacts with public builder images and reuses
+# an existing local chen runtime image as the final base layer.
+
+ARG NODE_BASE_IMAGE=node:16.20-bullseye-slim
+ARG MAVEN_BASE_IMAGE=maven:3.9.5-eclipse-temurin-17
+ARG RUNTIME_BASE_IMAGE=jumpserver/chen:v3.10.17
+
+FROM ${NODE_BASE_IMAGE} AS stage-web-build
+ARG TARGETARCH
+ARG NPM_REGISTRY="https://registry.npmmirror.com"
+
+RUN set -ex \
+    && npm config set registry ${NPM_REGISTRY} \
+    && yarn config set registry ${NPM_REGISTRY}
+
+WORKDIR /opt/chen/frontend
+ADD frontend/package.json frontend/yarn.lock .
+RUN --mount=type=cache,target=/usr/local/share/.cache/yarn,sharing=locked,id=chen \
+    yarn install
+
+ADD frontend .
+RUN --mount=type=cache,target=/usr/local/share/.cache/yarn,sharing=locked,id=chen \
+    yarn build
+
+FROM ${MAVEN_BASE_IMAGE} AS stage-chen-build
+ARG TARGETARCH
+
+WORKDIR /opt/chen
+
+COPY . .
+COPY --from=stage-web-build /opt/chen/frontend/dist frontend/dist
+
+ARG VERSION
+ENV VERSION=$VERSION
+
+ARG MAVEN_MIRROR=https://repo.maven.apache.org/maven2
+
+RUN --mount=type=cache,target=/root/.m2,id=chen \
+    set -ex \
+    && mkdir -p /root/.m2 \
+    && sed -i "s@https://repo.maven.apache.org/maven2@${MAVEN_MIRROR}@g" settings.xml \
+    && \cp -f settings.xml /root/.m2/ \
+    && mvn clean package -DskipTests
+
+RUN chmod +x entrypoint.sh
+
+FROM ${RUNTIME_BASE_IMAGE}
+ARG TARGETARCH
+
+WORKDIR /opt/chen
+
+COPY --from=stage-chen-build /opt/chen/backend/web/target/web-*.jar /opt/chen/chen.jar
+COPY --from=stage-chen-build /opt/chen/entrypoint.sh .
+COPY --from=stage-chen-build /opt/chen/drivers /opt/chen/drivers
+COPY --from=stage-chen-build /opt/chen/config/application.yml /opt/chen/config/application.yml
+COPY --from=stage-chen-build /opt/chen/config/logback.xml /opt/chen/config/logback.xml
+
+ARG VERSION
+ENV VERSION=$VERSION
+
+EXPOSE 8082
+
+CMD ["./entrypoint.sh"]

@@ -7,6 +7,8 @@ import org.jumpserver.chen.framework.datasource.DatasourceFactory;
 import org.jumpserver.chen.framework.datasource.entity.DBConnectInfo;
 import org.jumpserver.chen.framework.session.Session;
 import org.jumpserver.chen.framework.session.impl.JMSSession;
+import org.jumpserver.chen.web.auth.AuthFlowDispatcher;
+import org.jumpserver.chen.web.auth.ConnectionAuthSpec;
 import org.jumpserver.chen.web.service.SessionService;
 import org.jumpserver.chen.wisp.Common;
 import org.jumpserver.chen.wisp.ServiceGrpc;
@@ -14,6 +16,7 @@ import org.jumpserver.chen.wisp.ServiceOuterClass;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.Locale;
 
 @Service
 @Slf4j
@@ -91,7 +94,10 @@ public class JmsSessionService implements SessionService {
         dbConnectInfo.setDb(tokenResp.getData().getAsset().getSpecific().getDbName());
 
         var platformSettings = tokenResp.getData().getPlatform().getProtocols(0).getSettingsMap();
-//
+        var authSpec = ConnectionAuthSpec.fromSettings(platformSettings);
+        var authFlowRoute = AuthFlowDispatcher.resolve(authSpec);
+        this.applyAuthFlow(dbConnectInfo, authSpec, authFlowRoute);
+
         if (platformSettings.containsKey("sysdba") && platformSettings.get("sysdba").equals("true")) {
             dbConnectInfo.getOptions().put("internal_logon", "sysdba");
         }
@@ -110,6 +116,45 @@ public class JmsSessionService implements SessionService {
             dbConnectInfo.getOptions().put("clientKey", asset.getSpecific().getClientKey());
         }
         return DatasourceFactory.fromConnectInfo(dbConnectInfo);
+    }
+
+    private void applyAuthFlow(
+            DBConnectInfo dbConnectInfo,
+            ConnectionAuthSpec authSpec,
+            AuthFlowDispatcher.Route authFlowRoute
+    ) {
+        dbConnectInfo.getOptions().put("authFlowVersion", authSpec.normalizedFlowVersion());
+        dbConnectInfo.getOptions().put("authRoute", authFlowRoute.name().toLowerCase(Locale.ROOT));
+
+        if (authSpec.hasAuthContext()) {
+            if (!authSpec.authType().isEmpty()) {
+                dbConnectInfo.getOptions().put("authType", authSpec.authType());
+            }
+            if (!authSpec.authSource().isEmpty()) {
+                dbConnectInfo.getOptions().put("authSource", authSpec.authSource());
+            }
+            if (!authSpec.scope().isEmpty()) {
+                dbConnectInfo.getOptions().put("scope", authSpec.scope());
+            }
+        }
+
+        switch (authFlowRoute) {
+            case LEGACY -> this.handleLegacyAuthFlow(authSpec);
+            case V1, V2 -> log.info(
+                    "Auth flow {} selected for datasource creation: authType={}, authSource={}",
+                    authSpec.normalizedFlowVersion(), authSpec.authType(), authSpec.authSource()
+            );
+            case UNKNOWN -> log.warn(
+                    "Unknown auth_flow_version '{}', continue with base datasource flow",
+                    authSpec.authFlowVersion()
+            );
+        }
+    }
+
+    private void handleLegacyAuthFlow(ConnectionAuthSpec authSpec) {
+        if (authSpec.isCorePocToken()) {
+            log.info("Legacy auth flow detected with core_poc_token source, consume core token without re-fetch");
+        }
     }
 
     private Common.Session createJMSSession(ServiceOuterClass.TokenResponse tokenResp, String remoteAddr) {
