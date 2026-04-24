@@ -594,6 +594,21 @@ public class PageUtils {
                         return Integer.MAX_VALUE;
                     }
 
+                    if (query instanceof SQLServerSelectQueryBlock) {
+                        SQLServerTop top = ((SQLServerSelectQueryBlock) query).getTop();
+                        if (top == null) {
+                            return -1;
+                        }
+                        if (top.isPercent()) {
+                            return Integer.MAX_VALUE;
+                        }
+                        SQLExpr topExpr = top.getExpr();
+                        if (topExpr instanceof SQLNumericLiteralExpr) {
+                            return ((SQLNumericLiteralExpr) topExpr).getNumber().intValue();
+                        }
+                        return Integer.MAX_VALUE;
+                    }
+
                     return -1;
                 }
             }
