@@ -10,6 +10,7 @@ import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.jumpserver.chen.framework.i18n.MessageUtils;
 import org.jumpserver.chen.framework.jms.acl.ACLResult;
+import org.jumpserver.chen.framework.policy.QueryPolicyHolder;
 import org.jumpserver.chen.framework.utils.PageUtils;
 
 import java.sql.Connection;
@@ -47,6 +48,17 @@ public class SQLExecutePlan {
 
         if (this.sqlQueryParams == null) {
             return;
+        }
+
+        // task-02 (R01/R04): clamp the requested limit to the configured
+        // hard cap before any pagination rewrite happens. -1 (no limit
+        // requested) is preserved so the existing "explicit unlimited"
+        // path keeps working; everything else is min(requested, maxRows).
+        var policy = QueryPolicyHolder.current();
+        int clamped = policy.clampLimit(this.sqlQueryParams.getLimit());
+        if (clamped != this.sqlQueryParams.getLimit()) {
+            log.info("QueryPolicy clamped limit {} -> {}", this.sqlQueryParams.getLimit(), clamped);
+            this.sqlQueryParams.setLimit(clamped);
         }
 
         if (this.sqlQueryParams.getLimit() == -1) {

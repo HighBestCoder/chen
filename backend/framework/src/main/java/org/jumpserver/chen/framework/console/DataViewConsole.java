@@ -12,6 +12,7 @@ import org.jumpserver.chen.framework.console.state.StateManager;
 import org.jumpserver.chen.framework.datasource.Datasource;
 import org.jumpserver.chen.framework.i18n.MessageUtils;
 import org.jumpserver.chen.framework.jms.entity.CommandRecord;
+import org.jumpserver.chen.framework.policy.QueryPolicyHolder;
 import org.jumpserver.chen.framework.session.SessionManager;
 import org.jumpserver.chen.framework.utils.TreeUtils;
 import org.jumpserver.chen.framework.ws.io.Packet;
@@ -102,6 +103,19 @@ public class DataViewConsole extends AbstractConsole {
         var viewTitle = this.getTitle() + "child";
         this.getPacketIO().sendPacket("new_data_view", Map.of("title", viewTitle));
         var dataView = new DataView(viewTitle, this.getPacketIO(), this.getConsoleLogger());
+
+        // task-02 (R04 §6.4): object-browse / table-preview path defaults
+        // to QueryPolicy.defaultPreviewLimit (built-in 100), separately
+        // from the SQL console's own default (50). The hard cap from
+        // QueryPolicy.maxRows still applies in SQLExecutePlan.
+        try {
+            int previewLimit = QueryPolicyHolder.current().getDefaultPreviewLimit();
+            if (previewLimit > 0) {
+                dataView.getStateManager().getState().setLimit(previewLimit);
+            }
+        } catch (Throwable t) {
+            // never let the policy lookup break the data-view creation.
+        }
 
         var session = SessionManager.getCurrentSession();
         dataView.setLoadDataInterface((sqlQueryParams) -> {

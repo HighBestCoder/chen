@@ -20,3 +20,17 @@ grpc:
       address: static://127.0.0.1:9090
       enable-keep-alive: true
       negotiationType: PLAINTEXT
+
+# task-02 (R01/R04): SQL execution policy. All keys are optional; when
+# omitted, QueryPolicy built-in defaults apply (max-rows=10000,
+# default-console-limit=50, default-preview-limit=100,
+# default-timeout-seconds=30, max-timeout-seconds=300,
+# export-max-rows=100000, console-limit-options=[50,100,500,5000,10000]).
+#query:
+#  max-rows: 10000
+#  default-console-limit: 50
+#  default-preview-limit: 100
+#  default-timeout-seconds: 30
+#  max-timeout-seconds: 300
+#  export-max-rows: 100000
+#  console-limit-options: [50, 100, 500, 5000, 10000]

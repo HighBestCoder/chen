@@ -14,6 +14,7 @@ import org.jumpserver.chen.framework.datasource.ConnectionManager;
 import org.jumpserver.chen.framework.datasource.entity.resource.Field;
 import org.jumpserver.chen.framework.datasource.sql.*;
 import org.jumpserver.chen.framework.jms.exception.CommandRejectException;
+import org.jumpserver.chen.framework.policy.QueryPolicyHolder;
 import org.jumpserver.chen.framework.session.SessionManager;
 import org.jumpserver.chen.framework.utils.HexUtils;
 import org.jumpserver.chen.framework.utils.PageUtils;
@@ -126,6 +127,7 @@ public abstract class BaseSQLActuator implements SQLActuator {
         result.setAclResult(plan.getAclResult());
         try {
             Statement statement = plan.createStatement();
+            applyQueryTimeout(statement, plan);
             this.executeStatement(plan, statement, result);
         } finally {
             if (plan.getConnection() instanceof DruidPooledConnection) {
@@ -133,6 +135,30 @@ public abstract class BaseSQLActuator implements SQLActuator {
             }
         }
         return result;
+    }
+
+    /**
+     * task-02: enforce JDBC {@code setQueryTimeout} on every executed
+     * statement based on the active {@link QueryPolicyHolder}. The
+     * caller-supplied timeout (via {@code SQLQueryParams.timeout}) is
+     * clamped to the configured {@code maxTimeoutSeconds}; an unset
+     * timeout falls back to {@code defaultTimeoutSeconds}.
+     */
+    private static void applyQueryTimeout(Statement statement, SQLExecutePlan plan) {
+        if (statement == null || plan == null || plan.getSqlQueryParams() == null) {
+            return;
+        }
+        try {
+            int requested = plan.getSqlQueryParams().getTimeout();
+            int effective = QueryPolicyHolder.current().resolveTimeoutSeconds(requested);
+            if (effective > 0) {
+                statement.setQueryTimeout(effective);
+            }
+        } catch (Throwable t) {
+            // Drivers that do not support setQueryTimeout (or report a
+            // negative value) must not break the execution path.
+            log.debug("setQueryTimeout failed (non-fatal): {}", t.getMessage());
+        }
     }
 
     private void executeStatement(SQLExecutePlan plan, Statement statement, SQLQueryResult result) throws SQLException {
@@ -223,6 +249,7 @@ public abstract class BaseSQLActuator implements SQLActuator {
             }
             var countSQL = PagerUtils.count(plan.getSourceSQL(), plan.getDruidDbType());
             try (Statement stmt = plan.createStatement()) {
+                applyQueryTimeout(stmt, plan);
                 var resultSet = stmt.executeQuery(countSQL);
                 if (resultSet.next()) {
                     return resultSet.getInt(1);
