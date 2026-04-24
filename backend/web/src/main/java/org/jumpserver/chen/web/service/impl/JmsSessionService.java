@@ -9,6 +9,7 @@ import org.jumpserver.chen.framework.session.Session;
 import org.jumpserver.chen.framework.session.impl.JMSSession;
 import org.jumpserver.chen.web.auth.AuthFlowDispatcher;
 import org.jumpserver.chen.web.auth.ConnectionAuthSpec;
+import org.jumpserver.chen.web.auth.RelationalAuthFlowHandler;
 import org.jumpserver.chen.web.service.SessionService;
 import org.jumpserver.chen.wisp.Common;
 import org.jumpserver.chen.wisp.ServiceGrpc;
@@ -138,15 +139,49 @@ public class JmsSessionService implements SessionService {
             }
         }
 
+        // task-07 slice A: per-protocol relational decision. The decision
+        // is recorded in DBConnectInfo.options so downstream connection
+        // managers (and the audit pipeline) can act on it without
+        // re-parsing the auth context. Slice C consumes
+        // V1_ACCESS_TOKEN_REQUIRED to drive the SQL Server AccessToken
+        // path; for now we only log + tag.
+        var relationalDecision = RelationalAuthFlowHandler.decide(
+                authSpec, authFlowRoute, dbConnectInfo.getDbType()
+        );
+        dbConnectInfo.getOptions().put("relationalAuthDecision", relationalDecision.decision().name());
+        dbConnectInfo.getOptions().put("relationalAuthReason", relationalDecision.reason());
+
         switch (authFlowRoute) {
             case LEGACY -> this.handleLegacyAuthFlow(authSpec);
             case V1, V2 -> log.info(
-                    "Auth flow {} selected for datasource creation: authType={}, authSource={}",
-                    authSpec.normalizedFlowVersion(), authSpec.authType(), authSpec.authSource()
+                    "Auth flow {} selected for datasource creation: authType={}, authSource={}, dbType={}, decision={}",
+                    authSpec.normalizedFlowVersion(), authSpec.authType(), authSpec.authSource(),
+                    dbConnectInfo.getDbType(), relationalDecision.decision()
             );
             case UNKNOWN -> log.warn(
                     "Unknown auth_flow_version '{}', continue with base datasource flow",
                     authSpec.authFlowVersion()
+            );
+        }
+
+        if (relationalDecision.requiresAccessToken()) {
+            // SQL Server v1 path needs a true AccessToken hand-off via the
+            // mssql-jdbc driver. Slice C will install that bridge; until
+            // then we keep the legacy token-as-password behaviour and warn
+            // loudly so the operator knows the protocol-level upgrade is
+            // pending.
+            log.warn(
+                    "Relational auth decision '{}' is not yet wired (slice C pending) — "
+                            + "falling back to token-as-password for dbType={}",
+                    relationalDecision.decision(), dbConnectInfo.getDbType()
+            );
+        } else if (relationalDecision.isUnsupported()) {
+            log.warn(
+                    "Relational auth decision UNSUPPORTED: dbType={}, route={}, reason={} — "
+                            + "datasource will use the inbound password verbatim",
+                    relationalDecision.normalizedDbType(),
+                    relationalDecision.routeName(),
+                    relationalDecision.reason()
             );
         }
     }
