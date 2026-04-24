@@ -3,6 +3,8 @@ package org.jumpserver.chen.framework.session.impl;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import org.jumpserver.chen.framework.audit.ExecutionStats;
+import org.jumpserver.chen.framework.audit.SqlExecutionStatsBuilder;
 import org.jumpserver.chen.framework.datasource.Datasource;
 import org.jumpserver.chen.framework.datasource.sql.SQLQueryResult;
 import org.jumpserver.chen.framework.i18n.MessageUtils;
@@ -277,11 +279,24 @@ public class JMSSession extends BaseSession {
             commandRecord.setCmdGroupId(result.getAclResult().getCmdGroupId());
             commandRecord.setRiskLevel(result.getAclResult().getRiskLevel());
 
+            try {
+                ExecutionStats stats = SqlExecutionStatsBuilder.fromSuccess(this.getDatasource(), command, result);
+                commandRecord.setExecutionStats(stats);
+            } catch (Throwable statsErr) {
+                log.warn("withAudit: failed to build success ExecutionStats, continuing without it", statsErr);
+            }
+
             this.replayHandler.writeOutput(result.getOutput());
             return result;
 
         } catch (SQLException e) {
             commandRecord.setError(e.getMessage());
+            try {
+                ExecutionStats stats = SqlExecutionStatsBuilder.fromFailure(this.getDatasource(), command, e);
+                commandRecord.setExecutionStats(stats);
+            } catch (Throwable statsErr) {
+                log.warn("withAudit: failed to build failure ExecutionStats, continuing without it", statsErr);
+            }
             this.replayHandler.writeOutput(e.getMessage());
             throw e;
         } finally {

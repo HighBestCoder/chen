@@ -1,6 +1,7 @@
 package org.jumpserver.chen.framework.jms.impl;
 
 import lombok.extern.slf4j.Slf4j;
+import org.jumpserver.chen.framework.audit.ExecutionStatsEnvelope;
 import org.jumpserver.chen.framework.jms.CommandHandler;
 import org.jumpserver.chen.framework.jms.entity.CommandRecord;
 import org.jumpserver.chen.wisp.Common;
@@ -23,6 +24,16 @@ public class CommandHandlerImpl implements CommandHandler {
     @Async
     public void recordCommand(CommandRecord commandRecord) {
 
+        // task-01: until the wisp .proto is upgraded with first-class fields,
+        // we piggyback the structured ExecutionStats payload onto the existing
+        // `output` string via a clearly delimited envelope. The core side
+        // (entra-patch) is responsible for stripping the envelope before
+        // display and persisting the structured fields into terminal_command.
+        String output = ExecutionStatsEnvelope.appendTo(
+                commandRecord.getOutput(),
+                commandRecord.getExecutionStats()
+        );
+
         var reqBuilder = ServiceOuterClass.CommandRequest
                 .newBuilder()
                 .setSid(this.session.getId())
@@ -32,7 +43,7 @@ public class CommandHandlerImpl implements CommandHandler {
                 .setUser(this.session.getUser())
                 .setTimestamp(System.currentTimeMillis() / 1000)
                 .setInput(commandRecord.getInput())
-                .setOutput(commandRecord.getOutput())
+                .setOutput(output)
                 .setRiskLevel(commandRecord.getRiskLevel());
 
         if (commandRecord.getCmdAclId() != null && commandRecord.getCmdGroupId() != null) {
