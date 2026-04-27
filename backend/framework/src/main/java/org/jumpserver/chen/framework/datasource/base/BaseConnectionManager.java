@@ -37,10 +37,7 @@ public abstract class BaseConnectionManager implements ConnectionManager {
     }
 
     public void ping(String jdbcUrl, Properties props) throws SQLException {
-        props.setProperty("user", this.getConnectInfo().getUser());
-        if (StringUtils.isNotBlank(this.getConnectInfo().getPassword())) {
-            props.setProperty("password", this.getConnectInfo().getPassword());
-        }
+        this.applyAuthProps(props);
         this.setSSLProps(props);
         this.getDriver().connect(jdbcUrl, props).close();
     }
@@ -48,6 +45,21 @@ public abstract class BaseConnectionManager implements ConnectionManager {
     public void ping(String jdbcUrl) throws SQLException {
         Properties props = new Properties();
         this.ping(jdbcUrl, props);
+    }
+
+    /**
+     * task-07 slice C hook: subclasses may override to install an
+     * AccessToken (or other non-password credential) on the JDBC
+     * connection properties used for {@code Driver.connect()}.
+     *
+     * <p>Default behaviour preserves the legacy username + password
+     * semantics so existing connectors are bit-compatible.</p>
+     */
+    protected void applyAuthProps(Properties props) {
+        props.setProperty("user", this.getConnectInfo().getUser());
+        if (StringUtils.isNotBlank(this.getConnectInfo().getPassword())) {
+            props.setProperty("password", this.getConnectInfo().getPassword());
+        }
     }
 
     protected void setSSLProps(Properties props) {
@@ -160,11 +172,7 @@ public abstract class BaseConnectionManager implements ConnectionManager {
 
         ds.setDriver(this.getDriver());
         ds.setUrl(this.getJDBCUrl(database));
-        ds.setUsername(connectInfo.getUser());
-
-        if (StringUtils.isNotBlank(connectInfo.getPassword())) {
-            ds.setPassword(connectInfo.getPassword());
-        }
+        this.applyAuthOnDataSource(ds, properties);
 
         ds.setKeepAlive(true);
         ds.setFailFast(true);
@@ -181,5 +189,23 @@ public abstract class BaseConnectionManager implements ConnectionManager {
         }
         this.dataSourceMap.put(database, ds);
         return ds;
+    }
+
+    /**
+     * task-07 slice C hook: subclasses may override to install an
+     * AccessToken (or other non-password credential) on the underlying
+     * Druid pool. Implementations that do not need the password can
+     * skip {@link DruidDataSource#setPassword(String)} entirely and
+     * push the credential through {@code properties} (which is already
+     * wired into {@link DruidDataSource#setConnectProperties(Properties)}).
+     *
+     * <p>Default behaviour preserves the legacy username + password
+     * semantics so existing connectors are bit-compatible.</p>
+     */
+    protected void applyAuthOnDataSource(DruidDataSource ds, Properties properties) {
+        ds.setUsername(this.getConnectInfo().getUser());
+        if (StringUtils.isNotBlank(this.getConnectInfo().getPassword())) {
+            ds.setPassword(this.getConnectInfo().getPassword());
+        }
     }
 }
