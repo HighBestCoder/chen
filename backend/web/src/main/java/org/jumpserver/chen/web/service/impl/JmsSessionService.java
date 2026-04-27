@@ -166,13 +166,13 @@ public class JmsSessionService implements SessionService {
 
         if (relationalDecision.requiresAccessToken()) {
             // SQL Server v1 path needs a true AccessToken hand-off via the
-            // mssql-jdbc driver. Slice C will install that bridge; until
-            // then we keep the legacy token-as-password behaviour and warn
-            // loudly so the operator knows the protocol-level upgrade is
-            // pending.
-            log.warn(
-                    "Relational auth decision '{}' is not yet wired (slice C pending) — "
-                            + "falling back to token-as-password for dbType={}",
+            // mssql-jdbc driver. The bridge is now installed by chen
+            // SQLServerConnectionManager (task-07 slice C); it picks up
+            // the decision from DBConnectInfo.options and routes the
+            // bearer token through the accessToken connection property.
+            log.info(
+                    "Relational auth decision '{}' will be honoured by the SQL Server "
+                            + "AccessToken bridge (task-07 slice C) for dbType={}",
                     relationalDecision.decision(), dbConnectInfo.getDbType()
             );
         } else if (relationalDecision.isUnsupported()) {

@@ -1,6 +1,8 @@
 package org.jumpserver.chen.modules.sqlserver;
 
+import com.alibaba.druid.pool.DruidDataSource;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.jumpserver.chen.framework.datasource.Datasource;
 import org.jumpserver.chen.framework.datasource.base.BaseConnectionManager;
 import org.jumpserver.chen.framework.datasource.entity.DBConnectInfo;
@@ -10,6 +12,7 @@ import org.jumpserver.chen.framework.driver.DriverClassLoader;
 import java.lang.reflect.InvocationTargetException;
 import java.sql.Driver;
 import java.sql.SQLException;
+import java.util.Properties;
 
 @Slf4j
 public class SQLServerConnectionManager extends BaseConnectionManager {
@@ -90,5 +93,61 @@ public class SQLServerConnectionManager extends BaseConnectionManager {
     @Override
     public String getJDBCUrl(String database) {
         return this.getConnectInfo().toJDBCUrl(jdbcUrlTemplate, database);
+    }
+
+    /**
+     * task-07 slice C: when chen-web's RelationalAuthFlowHandler tagged
+     * the connection with V1_ACCESS_TOKEN_REQUIRED, route the bearer
+     * token through the mssql-jdbc {@code accessToken} property and
+     * suppress {@code user} / {@code password}, which the driver
+     * rejects in AccessToken mode.
+     */
+    @Override
+    protected void applyAuthProps(Properties props) {
+        if (!SqlServerAccessTokenSupport.isAccessTokenMode(this.getConnectInfo())) {
+            super.applyAuthProps(props);
+            return;
+        }
+        String token = SqlServerAccessTokenSupport.resolveAccessToken(this.getConnectInfo());
+        if (StringUtils.isBlank(token)) {
+            log.warn("[SqlServerEntra] AccessToken mode requested but token is blank; "
+                    + "falling back to legacy user/password auth");
+            super.applyAuthProps(props);
+            return;
+        }
+        // mssql-jdbc rejects (user, accessToken) and (password, accessToken)
+        // combinations. Strip both before injecting the bearer token.
+        props.remove("user");
+        props.remove("password");
+        props.setProperty(SqlServerAccessTokenSupport.JDBC_PROP_ACCESS_TOKEN, token);
+        log.info("[SqlServerEntra] Connecting with Entra AccessToken (token length={})", token.length());
+    }
+
+    /**
+     * Pool-level mirror of {@link #applyAuthProps(Properties)}. Druid
+     * forwards {@code connectProperties} into every physical connect,
+     * so dropping the bearer token there is sufficient for both the
+     * keep-alive validation query and user statements.
+     */
+    @Override
+    protected void applyAuthOnDataSource(DruidDataSource ds, Properties properties) {
+        if (!SqlServerAccessTokenSupport.isAccessTokenMode(this.getConnectInfo())) {
+            super.applyAuthOnDataSource(ds, properties);
+            return;
+        }
+        String token = SqlServerAccessTokenSupport.resolveAccessToken(this.getConnectInfo());
+        if (StringUtils.isBlank(token)) {
+            log.warn("[SqlServerEntra] AccessToken mode requested for pool but token is blank; "
+                    + "falling back to legacy user/password auth");
+            super.applyAuthOnDataSource(ds, properties);
+            return;
+        }
+        // Do NOT call ds.setUsername / ds.setPassword: mssql-jdbc treats
+        // any non-empty user as SQL Auth and rejects the AccessToken.
+        properties.remove("user");
+        properties.remove("password");
+        properties.setProperty(SqlServerAccessTokenSupport.JDBC_PROP_ACCESS_TOKEN, token);
+        ds.setConnectProperties(properties);
+        log.info("[SqlServerEntra] Druid pool initialised with Entra AccessToken (token length={})", token.length());
     }
 }
