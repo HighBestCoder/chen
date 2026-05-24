@@ -66,8 +66,9 @@ public final class SqlExecutionStatsBuilder {
         ExecutionStats stats = baseStats(datasource, command);
         stats.setSuccess(Boolean.FALSE);
         if (error != null) {
-            stats.setErrorMessage(error.getMessage());
-            stats.setErrorCode(error.getClass().getSimpleName());
+            String errorType = error.getClass().getSimpleName();
+            stats.setErrorMessage(errorType);
+            stats.setErrorCode(errorType);
         }
         return stats;
     }
@@ -75,7 +76,6 @@ public final class SqlExecutionStatsBuilder {
     private static ExecutionStats baseStats(Datasource datasource, String command) {
         ExecutionStats stats = new ExecutionStats();
         stats.setEngineType("sql");
-        stats.setRawCommand(command);
         stats.setOpType(detectOpType(command));
 
         if (datasource != null) {

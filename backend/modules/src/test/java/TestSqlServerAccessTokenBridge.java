@@ -88,7 +88,7 @@ public class TestSqlServerAccessTokenBridge {
         report("password removed", !props.containsKey("password"), true, !props.containsKey("password"));
         report("accessToken set",
                 "the-token".equals(props.getProperty(SqlServerAccessTokenSupport.JDBC_PROP_ACCESS_TOKEN)),
-                true, props.getProperty(SqlServerAccessTokenSupport.JDBC_PROP_ACCESS_TOKEN));
+                true, props.containsKey(SqlServerAccessTokenSupport.JDBC_PROP_ACCESS_TOKEN));
 
         if (failures > 0) {
             System.err.println("FAIL: " + failures + " case(s) failed");
@@ -115,7 +115,7 @@ public class TestSqlServerAccessTokenBridge {
             failures++;
         }
         System.out.printf("%-4s  expectMode=%-5s actualMode=%-5s expectToken=%s actualToken=%s  %s%n",
-                ok ? "ok" : "FAIL", expectMode, actualMode, expectToken, actualToken, label);
+                ok ? "ok" : "FAIL", expectMode, actualMode, mask(expectToken), mask(actualToken), label);
     }
 
     private static <T> void report(String label, boolean ok, T expected, T actual) {
@@ -125,4 +125,11 @@ public class TestSqlServerAccessTokenBridge {
         System.out.printf("%-4s  expect=%-30s actual=%-30s  %s%n",
                 ok ? "ok" : "FAIL", expected, actual, label);
     }
+
+        private static String mask(String value) {
+                if (value == null) {
+                        return "null";
+                }
+                return "<redacted>";
+        }
 }

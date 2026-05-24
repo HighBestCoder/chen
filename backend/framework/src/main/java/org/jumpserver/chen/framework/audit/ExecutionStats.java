@@ -36,7 +36,7 @@ public class ExecutionStats {
     /** Operation kind derived from the command (SELECT / INSERT / UPDATE / DELETE / DDL / OTHER). */
     private String opType;
 
-    /** Original command text, preserved for forensic audit. */
+    /** Original command text. Do not populate while stats are sent through output envelopes. */
     private String rawCommand;
 
     /** Rows affected by DML/DDL statements. {@code null} for read-only queries. */
@@ -66,7 +66,7 @@ public class ExecutionStats {
     /** Vendor / SQLState error code, when {@code success == false}. */
     private String errorCode;
 
-    /** Human-readable error message, when {@code success == false}. */
+    /** Sanitized error message, when {@code success == false}. */
     private String errorMessage;
 
     /**

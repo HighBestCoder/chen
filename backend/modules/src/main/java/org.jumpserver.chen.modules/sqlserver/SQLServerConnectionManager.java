@@ -120,7 +120,7 @@ public class SQLServerConnectionManager extends BaseConnectionManager {
         props.remove("user");
         props.remove("password");
         props.setProperty(SqlServerAccessTokenSupport.JDBC_PROP_ACCESS_TOKEN, token);
-        log.info("[SqlServerEntra] Connecting with Entra AccessToken (token length={})", token.length());
+        log.info("[SqlServerEntra] Connecting with Entra AccessToken");
     }
 
     /**
@@ -148,6 +148,6 @@ public class SQLServerConnectionManager extends BaseConnectionManager {
         properties.remove("password");
         properties.setProperty(SqlServerAccessTokenSupport.JDBC_PROP_ACCESS_TOKEN, token);
         ds.setConnectProperties(properties);
-        log.info("[SqlServerEntra] Druid pool initialised with Entra AccessToken (token length={})", token.length());
+        log.info("[SqlServerEntra] Druid pool initialised with Entra AccessToken");
     }
 }
