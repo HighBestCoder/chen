@@ -33,7 +33,6 @@ export class LunaEvent {
     if (this.lunaId != null) {
       const msg = { name: name, id: this.lunaId, data: data }
       window.parent.postMessage(msg, this.origin)
-      console.log('Chen send post message: ', msg)
     }
   }
 }

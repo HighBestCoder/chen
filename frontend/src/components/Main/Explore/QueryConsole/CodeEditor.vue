@@ -288,7 +288,7 @@ export default {
       this.$emit('action', { action: 'run_sql_file', data: resp.path })
     },
     onUploadError(err, file, fileList) {
-      console.log(err)
+      this.state.inQuery = false
     }
   }
 }

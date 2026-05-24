@@ -157,7 +157,6 @@ export default {
       this.ws.send(JSON.stringify({ type: 'sql', data: sql }))
     },
     onCloseDataView(name) {
-      console.log(name)
       this.ws.send(JSON.stringify({ type: 'close_data_view', data: name }))
     },
     onLimitChange(limit) {

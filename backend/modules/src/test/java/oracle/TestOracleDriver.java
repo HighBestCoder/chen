@@ -11,17 +11,21 @@ import java.util.Properties;
 public class TestOracleDriver {
 
     public static void main(String[] args) throws MalformedURLException {
+        String driverPath = System.getenv().getOrDefault("CHEN_ORACLE_DRIVER_JAR", "file:/path/to/ojdbc8.jar");
+        String username = System.getenv().getOrDefault("CHEN_ORACLE_TEST_USER", "example-user");
+        String password = System.getenv().getOrDefault("CHEN_ORACLE_TEST_PASSWORD", "example-password");
+        String jdbcUrl = System.getenv().getOrDefault("CHEN_ORACLE_TEST_JDBC_URL", "jdbc:oracle:thin:@127.0.0.1:1521:xe");
 
         try {
-            ClassLoader classLoader = new URLClassLoader(new URL[]{new URL("file:/Users/shenchenyang/IdeaProjects/chen/drivers/oracle/ojdbc8-21.9.0.0.jar")});
+            ClassLoader classLoader = new URLClassLoader(new URL[]{new URL(driverPath)});
             Driver driver = (Driver) classLoader.loadClass("oracle.jdbc.driver.OracleDriver").getDeclaredConstructor().newInstance();
 
             Properties properties = new Properties();
 
-            properties.setProperty("user","C##user1");
-            properties.setProperty("password","woCalong@2015");
+            properties.setProperty("user", username);
+            properties.setProperty("password", password);
 
-            var conn = driver.connect("jdbc:oracle:thin:@172.16.200.52:11521:xe", properties);
+            var conn = driver.connect(jdbcUrl, properties);
             conn.close();
 
 
