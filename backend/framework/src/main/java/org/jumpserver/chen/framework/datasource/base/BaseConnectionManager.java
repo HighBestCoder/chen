@@ -86,6 +86,8 @@ public abstract class BaseConnectionManager implements ConnectionManager {
                 props.setProperty("clientKeyPassword", JKSGenerator.JSK_PASS);
 
             }
+        } else {
+            props.setProperty("useSSL", "false");
         }
     }
 
