@@ -8,6 +8,7 @@ import org.jumpserver.chen.framework.datasource.base.BaseConnectionManager;
 import org.jumpserver.chen.framework.datasource.entity.DBConnectInfo;
 import org.jumpserver.chen.framework.datasource.sql.SQL;
 import org.jumpserver.chen.framework.driver.DriverClassLoader;
+import org.jumpserver.chen.framework.ssl.JKSGenerator;
 
 import java.lang.reflect.InvocationTargetException;
 import java.sql.Driver;
@@ -17,7 +18,7 @@ import java.util.Properties;
 @Slf4j
 public class SQLServerConnectionManager extends BaseConnectionManager {
 
-    private static final String jdbcUrlTemplate = "jdbc:sqlserver://${host}:${port};DatabaseName=${db};trustServerCertificate=true;";
+    private static final String jdbcUrlTemplate = "jdbc:sqlserver://${host}:${port};DatabaseName=${db};";
     private String jdbcUrl;
 
     private String driverClassloaderName = "mssql-jdbc-12.2.0.jre11.jar";
@@ -93,6 +94,39 @@ public class SQLServerConnectionManager extends BaseConnectionManager {
     @Override
     public String getJDBCUrl(String database) {
         return this.getConnectInfo().toJDBCUrl(jdbcUrlTemplate, database);
+    }
+
+    @Override
+    protected void setSSLProps(Properties props) {
+        var options = this.getConnectInfo().getOptions();
+
+        // mssql-jdbc does not understand these MySQL-style props; drop them.
+        props.remove("useSSL");
+        props.remove("requireSSL");
+        props.remove("verifyServerCertificate");
+        props.remove("trustCertificateKeyStoreUrl");
+        props.remove("trustCertificateKeyStorePassword");
+
+        boolean useSSL = Boolean.TRUE.equals(options.get("useSSL"));
+        if (!useSSL) {
+            props.setProperty("encrypt", "false");
+            return;
+        }
+
+        props.setProperty("encrypt", "true");
+        boolean verify = Boolean.TRUE.equals(options.get("verifyServerCertificate"));
+        if (!verify) {
+            props.setProperty("trustServerCertificate", "true");
+            return;
+        }
+
+        props.setProperty("trustServerCertificate", "false");
+        String caCert = (String) options.get("caCert");
+        if (StringUtils.isNotBlank(caCert)) {
+            var jks = new JKSGenerator(caCert);
+            props.setProperty("trustStore", jks.generateCaJKS().toString());
+            props.setProperty("trustStorePassword", JKSGenerator.JSK_PASS);
+        }
     }
 
     /**
