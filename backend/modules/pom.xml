@@ -19,5 +19,24 @@
             <version>${revision}</version>
         </dependency>
 
+        <dependency>
+            <groupId>org.mongodb</groupId>
+            <artifactId>mongodb-driver-sync</artifactId>
+            <version>5.2.1</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-websocket</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.jumpserver</groupId>
+            <artifactId>wisp</artifactId>
+            <version>${revision}</version>
+            <scope>provided</scope>
+        </dependency>
+
     </dependencies>
 </project>
