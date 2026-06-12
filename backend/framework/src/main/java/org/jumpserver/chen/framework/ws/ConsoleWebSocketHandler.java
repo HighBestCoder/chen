@@ -5,7 +5,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.jumpserver.chen.framework.console.Console;
 import org.jumpserver.chen.framework.console.DataViewConsole;
-import org.jumpserver.chen.framework.console.QueryConsole;
 import org.jumpserver.chen.framework.console.entity.request.Connect;
 import org.jumpserver.chen.framework.session.SessionManager;
 import org.jumpserver.chen.framework.utils.TreeUtils;
@@ -74,7 +73,7 @@ public class ConsoleWebSocketHandler extends TextWebSocketHandler {
 
         switch (connect.getType()) {
             case Connect.CONSOLE_TYPE_QUERY -> {
-                console = new QueryConsole(webSess.getDatasource(), session, connect.getNodeKey());
+                console = webSess.getDatasource().createQueryConsole(session, connect.getNodeKey());
             }
             case Connect.CONSOLE_TYPE_DATA_VIEW -> {
                 console = new DataViewConsole(webSess.getDatasource(), session, connect.getNodeKey());

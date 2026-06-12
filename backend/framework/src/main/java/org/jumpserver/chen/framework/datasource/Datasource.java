@@ -2,12 +2,14 @@ package org.jumpserver.chen.framework.datasource;
 
 
 import com.alibaba.druid.DbType;
+import org.jumpserver.chen.framework.console.Console;
 import org.jumpserver.chen.framework.datasource.entity.DBConnectInfo;
 import org.jumpserver.chen.framework.datasource.entity.DatasourceInfo;
 import org.jumpserver.chen.framework.datasource.entity.action.EventEmitter;
 import org.jumpserver.chen.framework.datasource.entity.resource.TreeNode;
 import org.jumpserver.chen.framework.datasource.entity.action.Action;
 import org.jumpserver.chen.framework.datasource.entity.form.FormData;
+import org.springframework.web.socket.WebSocketSession;
 
 
 import java.sql.SQLException;
@@ -35,6 +37,8 @@ public interface Datasource {
 
     ConnectionManager getConnectionManager();
     ResourceBrowser getResourceBrowser();
+
+    Console createQueryConsole(WebSocketSession ws, String nodeKey);
 
     void close();
 }
