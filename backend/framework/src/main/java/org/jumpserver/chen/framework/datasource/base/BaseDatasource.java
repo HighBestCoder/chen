@@ -4,6 +4,8 @@ import org.jumpserver.chen.framework.datasource.ActionHandler;
 import org.jumpserver.chen.framework.datasource.ConnectionManager;
 import org.jumpserver.chen.framework.datasource.Datasource;
 import org.jumpserver.chen.framework.datasource.ResourceBrowser;
+import org.jumpserver.chen.framework.console.Console;
+import org.jumpserver.chen.framework.console.QueryConsole;
 import org.jumpserver.chen.framework.datasource.entity.DBConnectInfo;
 import org.jumpserver.chen.framework.datasource.entity.DatasourceInfo;
 import org.jumpserver.chen.framework.datasource.entity.action.EventEmitter;
@@ -11,6 +13,7 @@ import org.jumpserver.chen.framework.datasource.entity.resource.TreeNode;
 import org.jumpserver.chen.framework.datasource.entity.action.Action;
 import org.jumpserver.chen.framework.datasource.entity.form.FormData;
 import org.jumpserver.chen.framework.session.SessionManager;
+import org.springframework.web.socket.WebSocketSession;
 
 import java.sql.SQLException;
 import java.util.List;
@@ -82,6 +85,11 @@ public abstract class BaseDatasource implements Datasource {
 
     public ResourceBrowser getResourceBrowser() {
         return this.resourceBrowser;
+    }
+
+    @Override
+    public Console createQueryConsole(WebSocketSession ws, String nodeKey) {
+        return new QueryConsole(this, ws, nodeKey);
     }
 
     public DBConnectInfo getConnectInfo() {
