@@ -67,9 +67,19 @@ public class MongoConnectionManager implements ConnectionManager {
         if (authSource != null && !authSource.isEmpty()) {
             uri.append("?authSource=").append(URLEncoder.encode(authSource, StandardCharsets.UTF_8));
         }
-        return MongoClientSettings.builder()
-                .applyConnectionString(new ConnectionString(uri.toString()))
-                .build();
+        MongoClientSettings.Builder builder = MongoClientSettings.builder()
+                .applyConnectionString(new ConnectionString(uri.toString()));
+
+        var options = this.connectInfo.getOptions();
+        if (MongoSslContextFactory.sslEnabled(options)) {
+            var sslContext = MongoSslContextFactory.build(options);
+            boolean verify = MongoSslContextFactory.verifyServerCertificate(options);
+            builder.applyToSslSettings(ssl -> ssl
+                    .enabled(true)
+                    .invalidHostNameAllowed(!verify)
+                    .context(sslContext));
+        }
+        return builder.build();
     }
 
     public MongoClient getClient() {
