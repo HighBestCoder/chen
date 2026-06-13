@@ -52,14 +52,18 @@ public class ACLFilterImpl implements ACLFilter {
         switch (acl.getAction()) {
             case Accept -> {
                 result.setRiskLevel(Common.RiskLevel.Normal);
+                result.setRiskAction("accept");
             }
             case Warning -> {
                 result.setRiskLevel(Common.RiskLevel.Warning);
+                result.setRiskAction("warning");
             }
             case Reject -> {
                 result.setRiskLevel(Common.RiskLevel.Reject);
+                result.setRiskAction("reject");
             }
             case Review -> {
+                result.setRiskAction("review");
                 var countDownLatch = new CountDownLatch(1);
                 AtomicReference<Exception> exception = new AtomicReference<>(null);
 
@@ -72,7 +76,7 @@ public class ACLFilterImpl implements ACLFilter {
                     new Thread(() -> {
                         SessionManager.setContext(token);
                         try {
-                            this.createAndWaitTicket(command, acl, connection);
+                            this.createAndWaitTicket(command, acl, connection, result);
                         } catch (Exception e) {
                             exception.set(e);
                         } finally {
@@ -100,6 +104,10 @@ public class ACLFilterImpl implements ACLFilter {
                     SessionManager.getCurrentSession().getController().closeDialog();
                 }
             }
+            default -> {
+                result.setRiskLevel(Common.RiskLevel.Normal);
+                result.setRiskAction("unknown");
+            }
         }
 
 
@@ -107,7 +115,7 @@ public class ACLFilterImpl implements ACLFilter {
     }
 
 
-    private void createAndWaitTicket(String command, Common.CommandACL commandACL, Connection connection) {
+    private void createAndWaitTicket(String command, Common.CommandACL commandACL, Connection connection, ACLResult result) {
         var affectRows = 0;
 
         var sqlActuator = SessionManager.getCurrentSession()
@@ -139,7 +147,26 @@ public class ACLFilterImpl implements ACLFilter {
         if (!resp.getStatus().getOk()) {
             throw new RuntimeException("create command ticket failed: " + resp.getStatus().getErr());
         }
+        result.setTicketId(extractTicketId(resp.getInfo().getTicketDetailUrl()));
         this.waitForTicketStatusChange(command, resp.getInfo());
+    }
+
+    // wisp's CommandConfirmResponse carries no bare ticket id; the only
+    // stable ticket identifier is the trailing UUID of ticket_detail_url
+    // (.../tickets/.../<uuid>). Extract it for audit instead of inventing one.
+    private static final Pattern TICKET_ID_PATTERN =
+            Pattern.compile("([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})");
+
+    private static String extractTicketId(String ticketDetailUrl) {
+        if (ticketDetailUrl == null || ticketDetailUrl.isEmpty()) {
+            return null;
+        }
+        var matcher = TICKET_ID_PATTERN.matcher(ticketDetailUrl);
+        String last = null;
+        while (matcher.find()) {
+            last = matcher.group(1);
+        }
+        return last;
     }
 
 
