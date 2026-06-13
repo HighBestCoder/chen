@@ -5,23 +5,30 @@ import org.jumpserver.chen.framework.datasource.entity.action.Action;
 import org.jumpserver.chen.framework.datasource.entity.action.EventEmitter;
 import org.jumpserver.chen.framework.datasource.entity.form.FormData;
 import org.jumpserver.chen.framework.datasource.entity.resource.TreeNode;
+import org.jumpserver.chen.framework.i18n.MessageUtils;
+import org.jumpserver.chen.framework.utils.TreeUtils;
 
 import java.util.List;
 
-/**
- * P1 placeholder: returns no context-menu actions. Real Mongo actions
- * (new query / view documents / refresh) are a later phase.
- */
 public class MongoActionHandler implements ActionHandler {
+
+    private static final int PREVIEW_LIMIT = 50;
 
     @Override
     public List<Action> getActions(TreeNode node) {
-        return List.of();
+        if (node == null) {
+            return List.of();
+        }
+        return switch (node.getType()) {
+            case "datasource", "database" -> List.of(refresh(), newQuery());
+            case "table" -> List.of(newQuery(), preview());
+            default -> List.of();
+        };
     }
 
     @Override
     public List<Action> getDatasourceActions(TreeNode node) {
-        return List.of();
+        return List.of(refresh(), newQuery());
     }
 
     @Override
@@ -31,7 +38,7 @@ public class MongoActionHandler implements ActionHandler {
 
     @Override
     public List<Action> getTableActions(TreeNode node) {
-        return List.of();
+        return List.of(newQuery(), preview());
     }
 
     @Override
@@ -51,11 +58,46 @@ public class MongoActionHandler implements ActionHandler {
 
     @Override
     public EventEmitter doAction(TreeNode node, String action) {
-        return null;
+        return switch (action) {
+            case "new_query" -> EventEmitter.of("new_query", node.getKey());
+            case "preview" -> EventEmitter.of("run_query", previewCommand(node));
+            case "refresh_node" -> EventEmitter.of("refresh_node", node.getKey());
+            default -> EventEmitter.of("blank", null);
+        };
     }
 
     @Override
     public EventEmitter handleForm(FormData formData) {
         return null;
+    }
+
+    private String previewCommand(TreeNode node) {
+        String collection = TreeUtils.getValue(node.getKey(), "table");
+        return String.format("db.%s.find({}).limit(%d)", collection, PREVIEW_LIMIT);
+    }
+
+    private Action newQuery() {
+        return Action.builder()
+                .label(MessageUtils.get("action.new_query"))
+                .key("new_query")
+                .icon("el-icon-search")
+                .build();
+    }
+
+    private Action preview() {
+        return Action.builder()
+                .label(MessageUtils.get("action.view_data"))
+                .key("preview")
+                .icon("el-icon-view")
+                .build();
+    }
+
+    private Action refresh() {
+        return Action.builder()
+                .label(MessageUtils.get("action.refresh"))
+                .key("refresh_node")
+                .divided(true)
+                .icon("el-icon-refresh")
+                .build();
     }
 }
