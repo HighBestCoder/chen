@@ -97,6 +97,7 @@ public class ACLFilterImpl implements ACLFilter {
                         result.setRiskLevel(Common.RiskLevel.ReviewReject);
                     } else {
                         result.setRiskLevel(Common.RiskLevel.ReviewAccept);
+                        result.setApprovedCommandHash(commandHash(command));
                     }
                 } catch (InterruptedException e) {
                     throw new RuntimeException(e);
@@ -263,8 +264,7 @@ public class ACLFilterImpl implements ACLFilter {
         }
     }
 
-    private void closeTicket(ServiceOuterClass.TicketInfo ticketInfo) {
-        var cancelRequest = ServiceOuterClass.TicketRequest.newBuilder()
+    private void closeTicket(ServiceOuterClass.TicketInfo ticketInfo) {        var cancelRequest = ServiceOuterClass.TicketRequest.newBuilder()
                 .setReq(ticketInfo.getCancelReq())
                 .build();
         var cancelResponse = this.serviceBlockingStub.cancelTicket(cancelRequest);
@@ -295,5 +295,28 @@ public class ACLFilterImpl implements ACLFilter {
             }
         }
         return null;
+    }
+
+    // SHA-256 of the exact command text approved in the review dialog, stored on
+    // the ACLResult so the console can confirm before executing that the command
+    // it is about to run is identical to the one the reviewer saw.
+    // Honest boundary: chen holds the command as one immutable string for the
+    // whole approve-then-execute path, so there is no in-process swap window;
+    // this guards against a future refactor / caller passing a different string,
+    // NOT against a frontend that replays approval against a new command (that
+    // belongs to the SPA layer, Task 24).
+    public static String commandHash(String command) {
+        try {
+            var digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(command.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(hash.length * 2);
+            for (byte b : hash) {
+                sb.append(Character.forDigit((b >> 4) & 0xF, 16));
+                sb.append(Character.forDigit(b & 0xF, 16));
+            }
+            return sb.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new RuntimeException(e);
+        }
     }
 }

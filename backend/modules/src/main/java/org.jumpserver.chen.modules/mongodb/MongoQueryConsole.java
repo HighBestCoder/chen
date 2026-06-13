@@ -14,6 +14,7 @@ import org.jumpserver.chen.framework.console.state.StateManager;
 import org.jumpserver.chen.framework.datasource.Datasource;
 import org.jumpserver.chen.framework.jms.acl.ACLResult;
 import org.jumpserver.chen.framework.jms.entity.CommandRecord;
+import org.jumpserver.chen.framework.jms.impl.ACLFilterImpl;
 import org.jumpserver.chen.framework.session.SessionManager;
 import org.jumpserver.chen.framework.ws.io.Packet;
 import org.jumpserver.chen.modules.mongodb.command.MongoActuator;
@@ -128,6 +129,15 @@ public class MongoQueryConsole extends AbstractConsole {
             this.getConsoleLogger().error("Command rejected by ACL");
             CommandRecord rejected = new CommandRecord(commandText);
             rejected.applyACL(aclResult);
+            session.recordCommand(rejected);
+            return;
+        }
+        if (aclResult != null && aclResult.getApprovedCommandHash() != null
+                && !aclResult.getApprovedCommandHash().equals(ACLFilterImpl.commandHash(commandText))) {
+            this.getConsoleLogger().error("Approved command hash mismatch");
+            CommandRecord rejected = new CommandRecord(commandText);
+            rejected.applyACL(aclResult);
+            rejected.setError("approved command hash mismatch");
             session.recordCommand(rejected);
             return;
         }
