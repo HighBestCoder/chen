@@ -1,0 +1,83 @@
+package org.jumpserver.chen.modules.mongodb.command;
+
+import org.jumpserver.chen.framework.audit.ExecutionStats;
+import org.jumpserver.chen.framework.datasource.sql.SQLQueryResult;
+import org.jumpserver.chen.modules.mongodb.MongoConnectionManager;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+/**
+ * Derives an {@link ExecutionStats} from a parsed Mongo command and its
+ * result, mirroring SqlExecutionStatsBuilder so the Mongo audit path emits
+ * the same structured fields (dbType / opType / returnedRows / durationMs /
+ * namespace / impactColumns) the relational path already reports.
+ */
+public final class MongoExecutionStatsBuilder {
+
+    private MongoExecutionStatsBuilder() {
+    }
+
+    public static ExecutionStats fromSuccess(MongoConnectionManager cm, MongoCommand command, SQLQueryResult result) {
+        ExecutionStats stats = baseStats(cm, command);
+        stats.setSuccess(Boolean.TRUE);
+        if (result == null) {
+            return stats;
+        }
+        try {
+            stats.setDurationMs(result.getTotalTimeUsed());
+        } catch (Throwable ignore) {
+        }
+        if (result.isHasResultSet()) {
+            List<List<Object>> data = result.getData();
+            stats.setReturnedRows(data == null ? 0L : (long) data.size());
+            if (result.getTotal() >= 0) {
+                stats.setTotalRows((long) result.getTotal());
+            }
+            stats.setImpactColumns(result.getFields().stream()
+                    .map(f -> f.getName())
+                    .filter(n -> n != null && !n.isEmpty())
+                    .collect(Collectors.toList()));
+        }
+        return stats;
+    }
+
+    public static ExecutionStats fromFailure(MongoConnectionManager cm, MongoCommand command, Throwable error) {
+        ExecutionStats stats = baseStats(cm, command);
+        stats.setSuccess(Boolean.FALSE);
+        if (error != null) {
+            String errorType = error.getClass().getSimpleName();
+            stats.setErrorMessage(errorType);
+            stats.setErrorCode(errorType);
+        }
+        return stats;
+    }
+
+    private static ExecutionStats baseStats(MongoConnectionManager cm, MongoCommand command) {
+        ExecutionStats stats = new ExecutionStats();
+        stats.setEngineType("mongo");
+        stats.setDbType("mongodb");
+        if (command != null) {
+            stats.setOpType(opType(command.getType()));
+        }
+        if (cm != null) {
+            try {
+                stats.setDbVersion(cm.getVersion());
+            } catch (Throwable ignore) {
+            }
+            stats.setNamespace(cm.getCurrentDatabaseName());
+        }
+        return stats;
+    }
+
+    private static String opType(MongoCommand.Type type) {
+        if (type == null) {
+            return "OTHER";
+        }
+        return switch (type) {
+            case FIND -> "FIND";
+            case SHOW_DBS, SHOW_COLLECTIONS -> "SHOW";
+            case USE_DB -> "USE";
+        };
+    }
+}
