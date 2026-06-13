@@ -20,6 +20,7 @@ import org.jumpserver.chen.modules.mongodb.command.MongoActuator;
 import org.jumpserver.chen.modules.mongodb.command.MongoCommand;
 import org.jumpserver.chen.modules.mongodb.command.MongoCommandException;
 import org.jumpserver.chen.modules.mongodb.command.MongoCommandParser;
+import org.jumpserver.chen.modules.mongodb.command.MongoExecutionStatsBuilder;
 import org.jumpserver.chen.wisp.Common;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -130,9 +131,6 @@ public class MongoQueryConsole extends AbstractConsole {
             session.recordCommand(rejected);
             return;
         }
-        CommandRecord allowed = new CommandRecord(commandText);
-        allowed.applyACL(aclResult);
-        session.recordCommand(allowed);
 
         final MongoCommand command;
         try {
@@ -140,6 +138,10 @@ public class MongoQueryConsole extends AbstractConsole {
         } catch (MongoCommandException e) {
             this.getConsoleLogger().error("parse error: %s", e.getMessage());
             this.getPacketIO().sendPacket("message", Message.error("Parse error", e.getMessage()));
+            CommandRecord parseFailed = new CommandRecord(commandText);
+            parseFailed.applyACL(aclResult);
+            parseFailed.setError(e.getMessage());
+            session.recordCommand(parseFailed);
             return;
         }
 
@@ -148,12 +150,16 @@ public class MongoQueryConsole extends AbstractConsole {
             this.stateManager.commit();
         }
 
+        CommandRecord record = new CommandRecord(commandText);
+        record.applyACL(aclResult);
         try {
             DataView dataView = new DataView(command.getRawText(), this.getPacketIO(), this.getConsoleLogger());
             dataView.setSql(command.getRawText());
             dataView.setLoadDataInterface((params) -> {
                 var result = this.actuator.execute(command, params.getOffset(), params.getLimit());
                 this.getConsoleLogger().success(result);
+                record.setExecutionStats(
+                        MongoExecutionStatsBuilder.fromSuccess(this.connectionManager, command, result));
                 return result;
             });
             dataView.loadData();
@@ -166,6 +172,11 @@ public class MongoQueryConsole extends AbstractConsole {
         } catch (Exception e) {
             this.getConsoleLogger().error("execute error: %s", e.getMessage());
             this.getPacketIO().sendPacket("message", Message.error("Execute error", e.getMessage()));
+            record.setError(e.getMessage());
+            record.setExecutionStats(
+                    MongoExecutionStatsBuilder.fromFailure(this.connectionManager, command, e));
+        } finally {
+            session.recordCommand(record);
         }
     }
 
