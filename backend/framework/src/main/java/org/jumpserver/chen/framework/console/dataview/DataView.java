@@ -153,6 +153,8 @@ public class DataView extends SQLResult {
                 return;
             }
             var writer = Files.newBufferedWriter(f.toPath());
+            // UTF-8 BOM so Excel opens non-ASCII (e.g. CJK) CSV without mojibake.
+            writer.write('\uFEFF');
 
             if (scope.equals("current")) {
                 for (Field field : this.data.getFields()) {
