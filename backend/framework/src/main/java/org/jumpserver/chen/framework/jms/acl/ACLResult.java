@@ -11,4 +11,8 @@ public class ACLResult {
 
     private String CmdGroupId;
 
+    private String riskAction;
+
+    private String ticketId;
+
 }
