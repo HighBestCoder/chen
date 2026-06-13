@@ -15,4 +15,6 @@ public class ACLResult {
 
     private String ticketId;
 
+    private String approvedCommandHash;
+
 }

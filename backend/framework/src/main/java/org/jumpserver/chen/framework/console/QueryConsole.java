@@ -19,6 +19,7 @@ import org.jumpserver.chen.framework.datasource.sql.SQLExecutePlan;
 import org.jumpserver.chen.framework.i18n.MessageUtils;
 import org.jumpserver.chen.framework.jms.acl.ACLResult;
 import org.jumpserver.chen.framework.jms.entity.CommandRecord;
+import org.jumpserver.chen.framework.jms.impl.ACLFilterImpl;
 import org.jumpserver.chen.framework.session.SessionManager;
 import org.jumpserver.chen.framework.utils.TreeUtils;
 import org.jumpserver.chen.framework.ws.io.Packet;
@@ -266,6 +267,18 @@ public class QueryConsole extends AbstractConsole {
                 this.getConsoleLogger().error("%s", MessageUtils.get("msg.error.acl_reject"));
                 CommandRecord commandRecord = new CommandRecord(sql);
                 commandRecord.applyACL(aclResult);
+                session.recordCommand(commandRecord);
+
+                this.getState().setInQuery(false);
+                this.stateManager.commit();
+                return;
+            }
+            if (aclResult.getApprovedCommandHash() != null
+                    && !aclResult.getApprovedCommandHash().equals(ACLFilterImpl.commandHash(sql))) {
+                this.getConsoleLogger().error("%s", MessageUtils.get("msg.error.acl_reject"));
+                CommandRecord commandRecord = new CommandRecord(sql);
+                commandRecord.applyACL(aclResult);
+                commandRecord.setError("approved command hash mismatch");
                 session.recordCommand(commandRecord);
 
                 this.getState().setInQuery(false);
