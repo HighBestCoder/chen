@@ -275,9 +275,7 @@ public class JMSSession extends BaseSession {
             var result = queryAuditFunction.run();
             commandRecord.setOutput(result);
 
-            commandRecord.setCmdAclId(result.getAclResult().getCmdAclId());
-            commandRecord.setCmdGroupId(result.getAclResult().getCmdGroupId());
-            commandRecord.setRiskLevel(result.getAclResult().getRiskLevel());
+            commandRecord.applyACL(result.getAclResult());
 
             try {
                 ExecutionStats stats = SqlExecutionStatsBuilder.fromSuccess(this.getDatasource(), command, result);
