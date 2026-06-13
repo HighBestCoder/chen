@@ -125,6 +125,11 @@ public abstract class BaseSQLActuator implements SQLActuator {
         String sql = plan.getTargetSQL();
         SQLQueryResult result = new SQLQueryResult(sql);
         result.setAclResult(plan.getAclResult());
+        result.setOriginalCommand(plan.getSourceSQL());
+        result.setExecutedCommand(plan.getTargetSQL());
+        result.setQueryLimit(plan.getQueryLimit());
+        result.setLimitSource(plan.getLimitSource());
+        result.setManualLimitDetected(plan.isManualLimitDetected());
         try {
             Statement statement = plan.createStatement();
             applyQueryTimeout(statement, plan);

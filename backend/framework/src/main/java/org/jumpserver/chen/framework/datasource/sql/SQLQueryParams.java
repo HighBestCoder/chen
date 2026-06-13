@@ -14,4 +14,6 @@ public class SQLQueryParams {
     private int limit;
 
     private int timeout = -1;
+
+    private String limitSource;
 }

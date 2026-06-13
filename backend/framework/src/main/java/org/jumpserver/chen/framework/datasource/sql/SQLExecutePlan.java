@@ -34,6 +34,10 @@ public class SQLExecutePlan {
 
     private boolean counted;
 
+    private boolean manualLimitDetected;
+    private int queryLimit = -1;
+    private String limitSource;
+
     private SQLQueryParams sqlQueryParams = new SQLQueryParams();
 
 
@@ -67,8 +71,13 @@ public class SQLExecutePlan {
 
         if (this.getTargetSQLStatement() instanceof SQLSelectStatement selectStatement) {
             if (PageUtils.getLimit(this.targetSQL, this.druidDbType) > -1) {
+                this.manualLimitDetected = true;
+                this.limitSource = "manual";
                 return;
             }
+            this.queryLimit = this.getSqlQueryParams().getLimit();
+            this.limitSource = this.sqlQueryParams.getLimitSource() != null
+                    ? this.sqlQueryParams.getLimitSource() : "toolbar";
             this.targetSQL = PageUtils.limit(selectStatement.toString(),
                     this.druidDbType,
                     this.getSqlQueryParams().getOffset(),

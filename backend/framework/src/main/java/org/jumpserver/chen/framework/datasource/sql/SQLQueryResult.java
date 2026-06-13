@@ -27,6 +27,12 @@ public class SQLQueryResult {
 
     private ACLResult aclResult;
 
+    private String originalCommand;
+    private String executedCommand;
+    private int queryLimit = -1;
+    private String limitSource;
+    private boolean manualLimitDetected;
+
 
     public long getTotalTimeUsed() {
         if (this.hasResultSet) {
