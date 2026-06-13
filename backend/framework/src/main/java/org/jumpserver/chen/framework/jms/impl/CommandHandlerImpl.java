@@ -1,6 +1,7 @@
 package org.jumpserver.chen.framework.jms.impl;
 
 import lombok.extern.slf4j.Slf4j;
+import org.jumpserver.chen.framework.audit.ExecutionStats;
 import org.jumpserver.chen.framework.audit.ExecutionStatsEnvelope;
 import org.jumpserver.chen.framework.jms.CommandHandler;
 import org.jumpserver.chen.framework.jms.entity.CommandRecord;
@@ -24,14 +25,35 @@ public class CommandHandlerImpl implements CommandHandler {
     @Async
     public void recordCommand(CommandRecord commandRecord) {
 
-        // task-01: until the wisp .proto is upgraded with first-class fields,
-        // we piggyback the structured ExecutionStats payload onto the existing
-        // `output` string via a clearly delimited envelope. The core side
-        // (entra-patch) is responsible for stripping the envelope before
-        // display and persisting the structured fields into terminal_command.
+        // task-19: carry ACL risk metadata (matched / action / ticket) into the
+        // same exec-stats envelope the core entra-patch already persists into
+        // exec_extra. Reject/review commands never execute and thus have no
+        // ExecutionStats, so synthesize a minimal carrier when one is absent.
+        // Values MUST stay string/bool (no float): the task-13 integrity ledger
+        // canonicalizes exec_extra and rejects float values.
+        ExecutionStats stats = commandRecord.getExecutionStats();
+        if (commandRecord.isRiskMatched() || commandRecord.getTicketId() != null) {
+            if (stats == null) {
+                stats = new ExecutionStats();
+            }
+            stats.putExtra("risk_matched", commandRecord.isRiskMatched());
+            if (commandRecord.getRiskAction() != null) {
+                stats.putExtra("risk_action", commandRecord.getRiskAction());
+            }
+            if (commandRecord.getCmdAclId() != null) {
+                stats.putExtra("risk_rule_id", commandRecord.getCmdAclId());
+            }
+            if (commandRecord.getCmdGroupId() != null) {
+                stats.putExtra("risk_group_id", commandRecord.getCmdGroupId());
+            }
+            if (commandRecord.getTicketId() != null) {
+                stats.putExtra("ticket_id", commandRecord.getTicketId());
+            }
+        }
+
         String output = ExecutionStatsEnvelope.appendTo(
                 commandRecord.getOutput(),
-                commandRecord.getExecutionStats()
+                stats
         );
 
         var reqBuilder = ServiceOuterClass.CommandRequest
