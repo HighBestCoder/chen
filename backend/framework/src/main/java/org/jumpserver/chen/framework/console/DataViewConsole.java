@@ -128,7 +128,7 @@ public class DataViewConsole extends AbstractConsole {
             if (aclResult != null && (aclResult.getRiskLevel() == Common.RiskLevel.Reject || aclResult.getRiskLevel() == Common.RiskLevel.ReviewReject)) {
                 this.getConsoleLogger().error("%s", MessageUtils.get("msg.error.acl_reject"));
                 CommandRecord commandRecord = new CommandRecord(sql);
-                commandRecord.setRiskLevel(aclResult.getRiskLevel());
+                commandRecord.applyACL(aclResult);
                 session.recordCommand(commandRecord);
 
                 this.stateManager.getState().setLoading(false);

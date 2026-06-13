@@ -118,11 +118,13 @@ public class MongoQueryConsole extends AbstractConsole {
                 || aclResult.getRiskLevel() == Common.RiskLevel.ReviewReject)) {
             this.getConsoleLogger().error("Command rejected by ACL");
             CommandRecord rejected = new CommandRecord(commandText);
-            rejected.setRiskLevel(aclResult.getRiskLevel());
+            rejected.applyACL(aclResult);
             session.recordCommand(rejected);
             return;
         }
-        session.recordCommand(new CommandRecord(commandText));
+        CommandRecord allowed = new CommandRecord(commandText);
+        allowed.applyACL(aclResult);
+        session.recordCommand(allowed);
 
         final MongoCommand command;
         try {
