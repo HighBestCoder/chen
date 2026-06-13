@@ -39,6 +39,8 @@ public final class SqlExecutionStatsBuilder {
             return stats;
         }
 
+        applyLimitAudit(stats, result);
+
         try {
             stats.setDurationMs(result.getTotalTimeUsed());
         } catch (Throwable ignore) {
@@ -71,6 +73,23 @@ public final class SqlExecutionStatsBuilder {
             stats.setErrorCode(errorType);
         }
         return stats;
+    }
+
+    private static void applyLimitAudit(ExecutionStats stats, SQLQueryResult result) {
+        if (result.getOriginalCommand() != null) {
+            stats.setRawCommand(result.getOriginalCommand());
+            stats.putExtra("original_command", result.getOriginalCommand());
+        }
+        if (result.getExecutedCommand() != null) {
+            stats.putExtra("executed_command", result.getExecutedCommand());
+        }
+        if (result.getLimitSource() != null) {
+            stats.putExtra("limit_source", result.getLimitSource());
+        }
+        if (result.getQueryLimit() >= 0) {
+            stats.putExtra("query_limit", result.getQueryLimit());
+        }
+        stats.putExtra("manual_limit_detected", result.isManualLimitDetected());
     }
 
     private static ExecutionStats baseStats(Datasource datasource, String command) {
