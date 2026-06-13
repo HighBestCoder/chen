@@ -71,6 +71,14 @@ public class MongoQueryConsole extends AbstractConsole {
 
     @Override
     public void handle(Packet packet) {
+        // ConsoleWebSocketHandler resets the connection-manager DB context from
+        // this console's node key before every packet (needed for relational
+        // multi-DB reconnects). For Mongo that would clobber a user's `use <db>`
+        // / dropdown switch, so re-apply the console's own selected context here.
+        String selected = this.getState().getCurrentContext();
+        if (selected != null && !selected.isEmpty()) {
+            this.connectionManager.setDatabaseContext(selected);
+        }
         switch (packet.getType()) {
             case "ping" -> this.getPacketIO().sendPacket("pong", null);
             case "close_data_view" -> this.dataViews.remove((String) packet.getData());
@@ -133,6 +141,11 @@ public class MongoQueryConsole extends AbstractConsole {
             this.getConsoleLogger().error("parse error: %s", e.getMessage());
             this.getPacketIO().sendPacket("message", Message.error("Parse error", e.getMessage()));
             return;
+        }
+
+        if (command.getType() == MongoCommand.Type.USE_DB) {
+            this.getState().setCurrentContext(command.getTargetDatabase());
+            this.stateManager.commit();
         }
 
         try {
