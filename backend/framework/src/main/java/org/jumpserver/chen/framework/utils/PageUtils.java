@@ -595,18 +595,32 @@ public class PageUtils {
                     }
 
                     if (query instanceof SQLServerSelectQueryBlock) {
-                        SQLServerTop top = ((SQLServerSelectQueryBlock) query).getTop();
-                        if (top == null) {
-                            return -1;
-                        }
-                        if (top.isPercent()) {
+                        SQLServerSelectQueryBlock sqlServerBlock = (SQLServerSelectQueryBlock) query;
+                        SQLServerTop top = sqlServerBlock.getTop();
+                        if (top != null) {
+                            if (top.isPercent()) {
+                                return Integer.MAX_VALUE;
+                            }
+                            SQLExpr topExpr = top.getExpr();
+                            if (topExpr instanceof SQLNumericLiteralExpr) {
+                                return ((SQLNumericLiteralExpr) topExpr).getNumber().intValue();
+                            }
                             return Integer.MAX_VALUE;
                         }
-                        SQLExpr topExpr = top.getExpr();
-                        if (topExpr instanceof SQLNumericLiteralExpr) {
-                            return ((SQLNumericLiteralExpr) topExpr).getNumber().intValue();
+                        // A hand-written OFFSET ... FETCH NEXT n ROWS ONLY is parsed
+                        // by Druid into the block's SQLLimit (rowCount = the FETCH
+                        // count). Detect it so the user's manual paging is honored
+                        // and we don't wrap it in our own rewrite. OFFSET without
+                        // FETCH leaves rowCount null and is NOT a manual row limit.
+                        SQLLimit fetchLimit = sqlServerBlock.getLimit();
+                        if (fetchLimit != null && fetchLimit.getRowCount() instanceof SQLNumericLiteralExpr) {
+                            long rows = ((SQLNumericLiteralExpr) fetchLimit.getRowCount()).getNumber().longValue();
+                            return rows >= Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) rows;
                         }
-                        return Integer.MAX_VALUE;
+                        if (fetchLimit != null && fetchLimit.getRowCount() != null) {
+                            return Integer.MAX_VALUE;
+                        }
+                        return -1;
                     }
 
                     return -1;
