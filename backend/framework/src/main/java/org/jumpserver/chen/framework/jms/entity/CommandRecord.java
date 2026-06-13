@@ -3,6 +3,7 @@ package org.jumpserver.chen.framework.jms.entity;
 import lombok.Data;
 import org.jumpserver.chen.framework.audit.ExecutionStats;
 import org.jumpserver.chen.framework.datasource.sql.SQLQueryResult;
+import org.jumpserver.chen.framework.jms.acl.ACLResult;
 import org.jumpserver.chen.wisp.Common;
 
 @Data
@@ -15,6 +16,10 @@ public class CommandRecord {
     private String CmdAclId;
     private boolean error = false;
 
+    private boolean riskMatched = false;
+    private String riskAction;
+    private String ticketId;
+
     /**
      * Optional structured execution statistics produced by the audited
      * SQL/NoSQL command. When present, the {@link org.jumpserver.chen.framework.jms.CommandHandler}
@@ -26,6 +31,20 @@ public class CommandRecord {
 
     public CommandRecord(String input) {
         this.input = input;
+    }
+
+    public void applyACL(ACLResult aclResult) {
+        if (aclResult == null) {
+            return;
+        }
+        this.CmdAclId = aclResult.getCmdAclId();
+        this.CmdGroupId = aclResult.getCmdGroupId();
+        if (aclResult.getRiskLevel() != null) {
+            this.riskLevel = aclResult.getRiskLevel();
+        }
+        this.riskAction = aclResult.getRiskAction();
+        this.ticketId = aclResult.getTicketId();
+        this.riskMatched = aclResult.getCmdAclId() != null;
     }
 
     public void setError(String errorMessage) {
