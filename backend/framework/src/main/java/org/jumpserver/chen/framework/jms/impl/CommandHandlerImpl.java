@@ -73,9 +73,17 @@ public class CommandHandlerImpl implements CommandHandler {
             reqBuilder.setCmdGroupId(commandRecord.getCmdGroupId());
         }
 
-        var resp = this.serviceBlockingStub.uploadCommand(reqBuilder.build());
-        if (!resp.getStatus().getOk()) {
-            throw new RuntimeException("upload command failed: " + resp.getStatus().getErr());
+        // Audit upload runs @Async, so a failure cannot surface as a user-visible
+        // error on the query itself. Per the task-14 honesty boundary we do not
+        // silently swallow it: log loudly so the Chen->Wisp->Core loss window is
+        // observable. We do not block or retry the user's command here.
+        try {
+            var resp = this.serviceBlockingStub.uploadCommand(reqBuilder.build());
+            if (!resp.getStatus().getOk()) {
+                log.error("upload command failed (audit may be lost): {}", resp.getStatus().getErr());
+            }
+        } catch (Exception e) {
+            log.error("upload command transport failed (audit may be lost): {}", e.getMessage(), e);
         }
     }
 
