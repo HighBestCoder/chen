@@ -54,10 +54,22 @@ public final class SqlExecutionStatsBuilder {
                 stats.setTotalRows((long) result.getTotal());
             }
             stats.setImpactColumns(extractColumnNames(result.getFields()));
+            applySizeStats(stats, result.getFields(), data);
         } else {
             stats.setAffectedRows((long) result.getUpdateCount());
         }
         return stats;
+    }
+
+    private static void applySizeStats(ExecutionStats stats, List<Field> fields, List<List<Object>> data) {
+        SizeCalculator.Result size = SizeCalculator.compute(fields, data);
+        if (SizeCalculator.STATUS_OK.equals(size.status)) {
+            stats.setSizeBytes(size.sizeBytes);
+        }
+        stats.putExtra("size_stats_status", size.status);
+        if (size.unavailableReason != null) {
+            stats.putExtra("size_stats_unavailable_reason", size.unavailableReason);
+        }
     }
 
     /**

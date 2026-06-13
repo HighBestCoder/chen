@@ -1,6 +1,7 @@
 package org.jumpserver.chen.modules.mongodb.command;
 
 import org.jumpserver.chen.framework.audit.ExecutionStats;
+import org.jumpserver.chen.framework.audit.SizeCalculator;
 import org.jumpserver.chen.framework.datasource.sql.SQLQueryResult;
 import org.jumpserver.chen.modules.mongodb.MongoConnectionManager;
 
@@ -38,6 +39,14 @@ public final class MongoExecutionStatsBuilder {
                     .map(f -> f.getName())
                     .filter(n -> n != null && !n.isEmpty())
                     .collect(Collectors.toList()));
+            SizeCalculator.Result size = SizeCalculator.compute(result.getFields(), data);
+            if (SizeCalculator.STATUS_OK.equals(size.status)) {
+                stats.setSizeBytes(size.sizeBytes);
+            }
+            stats.putExtra("size_stats_status", size.status);
+            if (size.unavailableReason != null) {
+                stats.putExtra("size_stats_unavailable_reason", size.unavailableReason);
+            }
         }
         return stats;
     }
