@@ -15,6 +15,7 @@ public class MongoActuator {
 
     private static final int DEFAULT_LIMIT = 100;
     private static final int MAX_LIMIT = 1000;
+    private static final int EXPORT_MAX = 100_000;
     private static final Document STABLE_SORT = new Document("_id", 1);
 
     private final MongoConnectionManager connectionManager;
@@ -69,9 +70,16 @@ public class MongoActuator {
     }
 
     private int resolveLimit(Integer commandLimit, int consoleLimit) {
-        int chosen = commandLimit != null ? commandLimit
-                : (consoleLimit > 0 ? consoleLimit : DEFAULT_LIMIT);
-        return Math.min(chosen, MAX_LIMIT);
+        if (commandLimit != null) {
+            return Math.min(commandLimit, MAX_LIMIT);
+        }
+        // consoleLimit < 0 is the DataView "export all" signal; cap it at
+        // EXPORT_MAX rather than collapsing to DEFAULT_LIMIT so exports are
+        // not silently truncated to a page, while still bounding memory.
+        if (consoleLimit < 0) {
+            return EXPORT_MAX;
+        }
+        return Math.min(consoleLimit > 0 ? consoleLimit : DEFAULT_LIMIT, MAX_LIMIT);
     }
 
     private SQLQueryResult executeShowDbs(MongoCommand command) {
