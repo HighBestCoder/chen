@@ -79,6 +79,12 @@ public class MongoConnectionManager implements ConnectionManager {
                     .invalidHostNameAllowed(!verify)
                     .context(sslContext));
         }
+        // DB-side audit identity: Mongo surfaces appName in
+        // currentOp / Cosmos vCoreMongoRequests.userAgent_s.
+        String auditTag = this.connectInfo.getAuditTag();
+        if (auditTag != null && !auditTag.isEmpty()) {
+            builder.applicationName(auditTag);
+        }
         return builder.build();
     }
 

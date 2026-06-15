@@ -39,6 +39,7 @@ public abstract class BaseConnectionManager implements ConnectionManager {
     public void ping(String jdbcUrl, Properties props) throws SQLException {
         this.applyAuthProps(props);
         this.setSSLProps(props);
+        this.applyAuditProps(props);
         this.getDriver().connect(jdbcUrl, props).close();
     }
 
@@ -88,6 +89,27 @@ public abstract class BaseConnectionManager implements ConnectionManager {
             }
         } else {
             props.setProperty("useSSL", "false");
+        }
+    }
+
+    /**
+     * Inject the DB-side audit identity (jumpserver user + session id) into
+     * the per-engine JDBC property the target database surfaces in its
+     * session table / audit log. Applied AFTER options so it cannot be
+     * overridden, and on BOTH the pooled datasource and the direct ping path
+     * so no connection reaches the DB without an identity.
+     */
+    protected void applyAuditProps(Properties props) {
+        String tag = this.connectInfo.getAuditTag();
+        if (StringUtils.isBlank(tag)) {
+            return;
+        }
+        switch (this.connectInfo.getDbType()) {
+            case "postgresql" -> props.setProperty("ApplicationName", tag);
+            case "sqlserver" -> props.setProperty("applicationName", tag);
+            case "mysql", "mariadb" -> props.setProperty("connectionAttributes", "program_name:" + tag);
+            default -> {
+            }
         }
     }
 
@@ -169,6 +191,8 @@ public abstract class BaseConnectionManager implements ConnectionManager {
         this.setSSLProps(properties);
 
         this.connectInfo.getOptions().forEach((k, v) -> properties.setProperty(k, v.toString()));
+
+        this.applyAuditProps(properties);
 
         ds.setConnectProperties(properties);
 
