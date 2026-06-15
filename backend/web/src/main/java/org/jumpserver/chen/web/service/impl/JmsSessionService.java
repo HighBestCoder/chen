@@ -7,6 +7,7 @@ import org.jumpserver.chen.framework.datasource.DatasourceFactory;
 import org.jumpserver.chen.framework.datasource.entity.DBConnectInfo;
 import org.jumpserver.chen.framework.session.Session;
 import org.jumpserver.chen.framework.session.impl.JMSSession;
+import org.jumpserver.chen.framework.utils.AuditTag;
 import org.jumpserver.chen.web.auth.AuthFlowDispatcher;
 import org.jumpserver.chen.web.auth.ConnectionAuthSpec;
 import org.jumpserver.chen.web.auth.RelationalAuthFlowHandler;
@@ -29,7 +30,7 @@ public class JmsSessionService implements SessionService {
 
         var tokenResp = this.getTokenResponse(token);
         var jmsSession = this.createJMSSession(tokenResp, remoteAddr);
-        var datasource = this.createDatasource(tokenResp);
+        var datasource = this.createDatasource(tokenResp, jmsSession.getId());
         var session = new JMSSession(jmsSession, datasource, remoteAddr, this.serviceBlockingStub, tokenResp);
         this.handleGateways(tokenResp, session, datasource);
         return session;
@@ -84,7 +85,7 @@ public class JmsSessionService implements SessionService {
         }
     }
 
-    private Datasource createDatasource(ServiceOuterClass.TokenResponse tokenResp) {
+    private Datasource createDatasource(ServiceOuterClass.TokenResponse tokenResp, String sessionId) {
         DBConnectInfo dbConnectInfo = new DBConnectInfo();
 
         dbConnectInfo.setHost(tokenResp.getData().getAsset().getAddress());
@@ -93,6 +94,16 @@ public class JmsSessionService implements SessionService {
         dbConnectInfo.setUser(tokenResp.getData().getAccount().getUsername());
         dbConnectInfo.setPassword(tokenResp.getData().getAccount().getSecret());
         dbConnectInfo.setDb(tokenResp.getData().getAsset().getSpecific().getDbName());
+
+        // DB-side audit identity: built from the JumpServer USER (not the DB
+        // account) + the Core session id, so the target DB's session table /
+        // audit log can be joined back to terminal_command.session.
+        if (sessionId == null || sessionId.isEmpty()) {
+            log.warn("audit tag skipped: empty session id from core; DB-side identity will be absent");
+        } else {
+            dbConnectInfo.setAuditTag(
+                    AuditTag.build(sessionId, tokenResp.getData().getUser().getUsername()));
+        }
 
         var platformSettings = tokenResp.getData().getPlatform().getProtocols(0).getSettingsMap();
         var authSpec = ConnectionAuthSpec.fromSettings(platformSettings);
