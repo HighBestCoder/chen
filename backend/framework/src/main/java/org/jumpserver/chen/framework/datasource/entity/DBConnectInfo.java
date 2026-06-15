@@ -15,6 +15,7 @@ public class DBConnectInfo {
     private String db;
     private String proxyHost;
     private Integer proxyPort;
+    private String auditTag;
 
     private Map<String, Object> options = new HashMap<>();
 
