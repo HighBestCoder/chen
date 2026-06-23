@@ -47,6 +47,11 @@ public final class RelationalAuthFlowHandler {
             "mssql"
     );
 
+    /** dbType strings that authenticate via the MongoDB OIDC callback. */
+    private static final Set<String> OIDC_DB_TYPES = Set.of(
+            "mongodb"
+    );
+
     private RelationalAuthFlowHandler() {
     }
 
@@ -71,6 +76,10 @@ public final class RelationalAuthFlowHandler {
             return decision == Outcome.V1_ACCESS_TOKEN_REQUIRED;
         }
 
+        public boolean requiresOidcToken() {
+            return decision == Outcome.V2_OIDC_TOKEN_REQUIRED;
+        }
+
         public boolean isUnsupported() {
             return decision == Outcome.UNSUPPORTED;
         }
@@ -86,6 +95,9 @@ public final class RelationalAuthFlowHandler {
         V1_TOKEN_AS_PASSWORD,
         /** v1 + SQL Server. Driver-level AccessToken required (slice C). */
         V1_ACCESS_TOKEN_REQUIRED,
+        /** v2 + MongoDB (Cosmos vCore). Driver-level OIDC callback required;
+         *  password carries the Core-minted bearer token. */
+        V2_OIDC_TOKEN_REQUIRED,
         /** Auth flow / dbType combination not yet handled. Caller should log. */
         UNSUPPORTED
     }
@@ -122,9 +134,15 @@ public final class RelationalAuthFlowHandler {
                 return new Decision(Outcome.UNSUPPORTED, normalizedDbType, routeName, "v1_unsupported_db_type");
             }
             case V2 -> {
-                // v2 is reserved for Mongo Entra (task-08) and other
-                // future flows; the relational handler does not own it.
-                return new Decision(Outcome.UNSUPPORTED, normalizedDbType, routeName, "v2_not_handled_here");
+                // v2 is the Mongo Entra flow (task-08). Only MongoDB is
+                // wired here; the token (carried in password) is handed to
+                // the driver via the MONGODB-OIDC callback by the chen
+                // MongoConnectionManager. Other dbTypes under v2 stay
+                // UNSUPPORTED so the caller logs and falls back.
+                if (OIDC_DB_TYPES.contains(normalizedDbType)) {
+                    return new Decision(Outcome.V2_OIDC_TOKEN_REQUIRED, normalizedDbType, routeName, "v2_oidc_token_required");
+                }
+                return new Decision(Outcome.UNSUPPORTED, normalizedDbType, routeName, "v2_unsupported_db_type");
             }
             case UNKNOWN -> {
                 return new Decision(Outcome.UNSUPPORTED, normalizedDbType, routeName, "unknown_route");

@@ -88,6 +88,14 @@ public class TestRelationalAuthFlowHandler {
                 Outcome.UNSUPPORTED
         );
 
+        // v2 + MongoDB -> OIDC token required (task-08 Mongo Entra).
+        check(
+                spec(Map.of("auth_flow_version", "v2")),
+                AuthFlowDispatcher.Route.V2,
+                "mongodb",
+                Outcome.V2_OIDC_TOKEN_REQUIRED
+        );
+
         // v2 / unknown route -> UNSUPPORTED at this handler.
         check(
                 spec(Map.of("auth_flow_version", "v2")),

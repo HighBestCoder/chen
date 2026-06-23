@@ -2,6 +2,7 @@ package org.jumpserver.chen.modules.mongodb;
 
 import com.mongodb.ConnectionString;
 import com.mongodb.MongoClientSettings;
+import com.mongodb.MongoCredential;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoDatabase;
@@ -48,29 +49,55 @@ public class MongoConnectionManager implements ConnectionManager {
     }
 
     private MongoClientSettings buildSettings() {
+        boolean oidc = MongoEntraAuthSupport.isOidcMode(this.connectInfo);
         String host = this.connectInfo.getProxyHost() != null
                 ? this.connectInfo.getProxyHost() : this.connectInfo.getHost();
         Integer port = this.connectInfo.getProxyPort() != null
                 ? this.connectInfo.getProxyPort() : this.connectInfo.getPort();
         StringBuilder uri = new StringBuilder("mongodb://");
-        String user = this.connectInfo.getUser();
-        String password = this.connectInfo.getPassword();
-        if (user != null && !user.isEmpty()) {
-            uri.append(URLEncoder.encode(user, StandardCharsets.UTF_8));
-            if (password != null && !password.isEmpty()) {
-                uri.append(':').append(URLEncoder.encode(password, StandardCharsets.UTF_8));
+        // Entra OIDC authenticates against $external via the driver
+        // callback; user / password must NOT appear in the URI, and the
+        // SCRAM ?authSource=<db> must be omitted or the server falls back
+        // to SCRAM and rejects the bearer token.
+        if (!oidc) {
+            String user = this.connectInfo.getUser();
+            String password = this.connectInfo.getPassword();
+            if (user != null && !user.isEmpty()) {
+                uri.append(URLEncoder.encode(user, StandardCharsets.UTF_8));
+                if (password != null && !password.isEmpty()) {
+                    uri.append(':').append(URLEncoder.encode(password, StandardCharsets.UTF_8));
+                }
+                uri.append('@');
             }
-            uri.append('@');
         }
         uri.append(host).append(':').append(port).append('/');
-        String authSource = this.connectInfo.getDb();
-        if (authSource != null && !authSource.isEmpty()) {
-            uri.append("?authSource=").append(URLEncoder.encode(authSource, StandardCharsets.UTF_8));
+        if (!oidc) {
+            String authSource = this.connectInfo.getDb();
+            if (authSource != null && !authSource.isEmpty()) {
+                uri.append("?authSource=").append(URLEncoder.encode(authSource, StandardCharsets.UTF_8));
+            }
         }
         MongoClientSettings.Builder builder = MongoClientSettings.builder()
                 .applyConnectionString(new ConnectionString(uri.toString()));
 
         var options = this.connectInfo.getOptions();
+        if (oidc) {
+            // chen only RELAYS the Core-minted token; it never contacts
+            // Azure. The bearer token is carried in password.
+            String token = MongoEntraAuthSupport.resolveToken(this.connectInfo);
+            if (token == null || token.isBlank()) {
+                throw new RuntimeException(
+                        "Mongo Entra OIDC requested but no token present in connection info");
+            }
+            // withMechanismProperty(String, T) is generic; a bare lambda
+            // will not infer OidcCallback, so use an explicitly typed var.
+            MongoCredential.OidcCallback callback =
+                    context -> new MongoCredential.OidcCallbackResult(token);
+            MongoCredential credential = MongoCredential.createOidcCredential(null)
+                    .withMechanismProperty(MongoCredential.OIDC_CALLBACK_KEY, callback);
+            builder.credential(credential);
+        }
+
         if (MongoSslContextFactory.sslEnabled(options)) {
             var sslContext = MongoSslContextFactory.build(options);
             boolean verify = MongoSslContextFactory.verifyServerCertificate(options);
@@ -78,6 +105,12 @@ public class MongoConnectionManager implements ConnectionManager {
                     .enabled(true)
                     .invalidHostNameAllowed(!verify)
                     .context(sslContext));
+        } else if (oidc) {
+            // Cosmos vCore mandates TLS for the OIDC handshake; enforce it
+            // with the JVM default trust store even if useSsl was unset.
+            builder.applyToSslSettings(ssl -> ssl
+                    .enabled(true)
+                    .invalidHostNameAllowed(false));
         }
         // DB-side audit identity: Mongo surfaces appName in
         // currentOp / Cosmos vCoreMongoRequests.userAgent_s.
