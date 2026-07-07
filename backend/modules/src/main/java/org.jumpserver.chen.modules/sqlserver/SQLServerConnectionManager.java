@@ -21,7 +21,7 @@ public class SQLServerConnectionManager extends BaseConnectionManager {
     private static final String jdbcUrlTemplate = "jdbc:sqlserver://${host}:${port};DatabaseName=${db};";
     private String jdbcUrl;
 
-    private String driverClassloaderName = "mssql-jdbc-12.2.0.jre11.jar";
+    private String driverClassloaderName = "mssql-jdbc-12.8.1.jre11.jar";
 
     public SQLServerConnectionManager(DBConnectInfo connectInfo, Datasource datasource) {
         super(connectInfo, datasource);

@@ -13,6 +13,7 @@ import org.jumpserver.chen.framework.console.entity.response.Message;
 import org.jumpserver.chen.framework.console.state.QueryConsoleState;
 import org.jumpserver.chen.framework.console.state.StateManager;
 import org.jumpserver.chen.framework.datasource.Datasource;
+import org.jumpserver.chen.framework.datasource.error.SqlPermissionErrorClassifier;
 import org.jumpserver.chen.framework.datasource.sql.SQL;
 import org.jumpserver.chen.framework.datasource.sql.SQLActuator;
 import org.jumpserver.chen.framework.datasource.sql.SQLExecutePlan;
@@ -307,8 +308,14 @@ public class QueryConsole extends AbstractConsole {
             this.getConsoleLogger().error("%s: %s", MessageUtils.get("msg.error.parse_error"), e.getMessage());
             this.getPacketIO().sendPacket("message", Message.error(MessageUtils.get("msg.error.parse_error"), e.getMessage()));
         } catch (SQLException e) {
-            this.getConsoleLogger().error("%s: %s", MessageUtils.get("msg.error.execute_error"), e.getMessage());
-            this.getPacketIO().sendPacket("message", Message.error(MessageUtils.get("msg.error.execute_error"), e.getMessage()));
+            if (SqlPermissionErrorClassifier.isPermissionDenied(e)) {
+                String msg = MessageUtils.get("msg.error.no_operation_permission");
+                this.getConsoleLogger().error("%s", msg);
+                this.getPacketIO().sendPacket("message", Message.error(msg, e.getMessage()));
+            } else {
+                this.getConsoleLogger().error("%s: %s", MessageUtils.get("msg.error.execute_error"), e.getMessage());
+                this.getPacketIO().sendPacket("message", Message.error(MessageUtils.get("msg.error.execute_error"), e.getMessage()));
+            }
         } finally {
             this.getState().setInQuery(false);
             this.getState().setCanCancel(false);

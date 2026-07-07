@@ -221,8 +221,10 @@ public abstract class BaseSQLActuator implements SQLActuator {
                 result.setUpdateCount(statement.getUpdateCount());
             }
             result.setEndTime(new Time(System.currentTimeMillis()));
+        } catch (SQLException e) {
+            throw e;
         } catch (Exception e) {
-            throw new SQLException(e.getMessage());
+            throw new SQLException(e.getMessage(), e);
         }
     }
 
