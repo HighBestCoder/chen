@@ -5,6 +5,7 @@ function resolve(dir) {
 }
 
 module.exports = {
+  lintOnSave: false,
   productionSourceMap: true,
   publicPath: '/chen',
   devServer: {
