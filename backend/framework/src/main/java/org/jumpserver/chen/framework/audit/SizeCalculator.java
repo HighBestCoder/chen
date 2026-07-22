@@ -43,19 +43,32 @@ public final class SizeCalculator {
         }
         try {
             long total = 0L;
-            int columnCount = fields.size();
             for (List<Object> row : data) {
-                int upto = Math.min(columnCount, row.size());
-                for (int i = 0; i < upto; i++) {
-                    Object value = row.get(i);
-                    if (value != null) {
-                        total += value.toString().getBytes(StandardCharsets.UTF_8).length;
-                    }
-                }
+                total += addRowBytes(fields, row);
             }
             return new Result(total, STATUS_OK, null);
         } catch (RuntimeException e) {
             return new Result(0L, STATUS_UNAVAILABLE, e.getClass().getSimpleName());
         }
+    }
+
+    /**
+     * Byte length contributed by a single row, using the exact same
+     * impact-column semantics as {@link #compute}: only the columns aligned
+     * to {@code fields} count, nulls are skipped, and each value is measured
+     * by the UTF-8 byte length of its {@code toString()}. Extracted so the
+     * streaming fetch loop can accumulate size incrementally without
+     * retaining the full result, yielding identical totals to {@code compute}.
+     */
+    public static long addRowBytes(List<Field> fields, List<Object> row) {
+        long total = 0L;
+        int upto = Math.min(fields.size(), row.size());
+        for (int i = 0; i < upto; i++) {
+            Object value = row.get(i);
+            if (value != null) {
+                total += value.toString().getBytes(StandardCharsets.UTF_8).length;
+            }
+        }
+        return total;
     }
 }

@@ -38,6 +38,8 @@ public class SQLExecutePlan {
     private int queryLimit = -1;
     private String limitSource;
 
+    private RowConsumer rowConsumer;
+
     private SQLQueryParams sqlQueryParams = new SQLQueryParams();
 
 
@@ -63,6 +65,16 @@ public class SQLExecutePlan {
         if (clamped != this.sqlQueryParams.getLimit()) {
             log.info("QueryPolicy clamped limit {} -> {}", this.sqlQueryParams.getLimit(), clamped);
             this.sqlQueryParams.setLimit(clamped);
+        }
+
+        // A limit of -1 means "no limit". The streaming export path (rowConsumer
+        // set) legitimately wants the full result and is memory-safe because it
+        // writes each row to disk instead of retaining it; keep -1 there. The
+        // interactive query / console path must NOT bypass the row cap (contract
+        // §2.3: "只返回选中数量以内"), so force -1 up to the hard maxRows before the
+        // LIMIT rewrite runs.
+        if (this.sqlQueryParams.getLimit() == -1 && this.rowConsumer == null) {
+            this.sqlQueryParams.setLimit(policy.getMaxRows());
         }
 
         if (this.sqlQueryParams.getLimit() == -1) {

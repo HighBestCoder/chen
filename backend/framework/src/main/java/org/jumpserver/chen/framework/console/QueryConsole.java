@@ -360,10 +360,11 @@ public class QueryConsole extends AbstractConsole {
         DataView dataView = new DataView(plan.getSourceSQL(), this.getPacketIO(), this.getConsoleLogger());
         dataView.setSql(plan.getSourceSQL());
 
-        dataView.setLoadDataInterface((sqlQueryParams) -> {
+        dataView.setLoadDataInterface((sqlQueryParams, sink) -> {
             sqlQueryParams.setTimeout(this.getState().getTimeout());
 
             plan.setSqlQueryParams(sqlQueryParams);
+            plan.setRowConsumer(sink);
             plan.generateTargetSQL();
 
             this.getConsoleLogger().info("execute sql: %s", plan.getTargetSQL());

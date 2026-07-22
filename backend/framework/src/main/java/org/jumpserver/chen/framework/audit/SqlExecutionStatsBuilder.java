@@ -49,20 +49,36 @@ public final class SqlExecutionStatsBuilder {
 
         if (result.isHasResultSet()) {
             List<List<Object>> data = result.getData();
-            stats.setReturnedRows(data == null ? 0L : (long) data.size());
+            long returnedRows = result.getTrueReturnedRows() >= 0
+                    ? result.getTrueReturnedRows()
+                    : (data == null ? 0L : (long) data.size());
+            stats.setReturnedRows(returnedRows);
             if (result.getTotal() >= 0) {
                 stats.setTotalRows((long) result.getTotal());
             }
             stats.setImpactColumns(extractColumnNames(result.getFields()));
-            applySizeStats(stats, result.getFields(), data);
+            applySizeStats(stats, result, data);
+            stats.putExtra("result_truncated", result.isTruncated());
         } else {
             stats.setAffectedRows((long) result.getUpdateCount());
         }
         return stats;
     }
 
-    private static void applySizeStats(ExecutionStats stats, List<Field> fields, List<List<Object>> data) {
-        SizeCalculator.Result size = SizeCalculator.compute(fields, data);
+    private static void applySizeStats(ExecutionStats stats, SQLQueryResult result, List<List<Object>> data) {
+        // Prefer the size accumulated over the FULL result during the streaming
+        // fetch loop; the retained {@code data} may be capped for display.
+        if (result.getStreamedSizeBytes() >= 0) {
+            if (SizeCalculator.STATUS_OK.equals(result.getSizeStatsStatus())) {
+                stats.setSizeBytes(result.getStreamedSizeBytes());
+            }
+            stats.putExtra("size_stats_status", result.getSizeStatsStatus());
+            if (result.getSizeStatsUnavailableReason() != null) {
+                stats.putExtra("size_stats_unavailable_reason", result.getSizeStatsUnavailableReason());
+            }
+            return;
+        }
+        SizeCalculator.Result size = SizeCalculator.compute(result.getFields(), data);
         if (SizeCalculator.STATUS_OK.equals(size.status)) {
             stats.setSizeBytes(size.sizeBytes);
         }
