@@ -165,7 +165,7 @@ public class MongoQueryConsole extends AbstractConsole {
         try {
             DataView dataView = new DataView(command.getRawText(), this.getPacketIO(), this.getConsoleLogger());
             dataView.setSql(command.getRawText());
-            dataView.setLoadDataInterface((params) -> {
+            dataView.setLoadDataInterface((params, sink) -> {
                 var result = this.actuator.execute(command, params.getOffset(), params.getLimit());
                 this.getConsoleLogger().success(result);
                 record.setExecutionStats(

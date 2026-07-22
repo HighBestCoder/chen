@@ -118,7 +118,7 @@ public class DataViewConsole extends AbstractConsole {
         }
 
         var session = SessionManager.getCurrentSession();
-        dataView.setLoadDataInterface((sqlQueryParams) -> {
+        dataView.setLoadDataInterface((sqlQueryParams, sink) -> {
             var plan = this.getDatasource()
                     .getConnectionManager()
                     .getSqlActuator()
@@ -136,6 +136,7 @@ public class DataViewConsole extends AbstractConsole {
                 throw new SQLException(MessageUtils.get("msg.error.acl_reject"));
             }
             plan.setSqlQueryParams(sqlQueryParams);
+            plan.setRowConsumer(sink);
             plan.generateTargetSQL();
 
             plan.setAclResult(aclResult);

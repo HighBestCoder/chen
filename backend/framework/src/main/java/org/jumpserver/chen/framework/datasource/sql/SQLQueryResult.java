@@ -33,6 +33,16 @@ public class SQLQueryResult {
     private String limitSource;
     private boolean manualLimitDetected;
 
+    // Streaming size statistics carried from the fetch loop so the audit
+    // builder can use a full-result size/row count even when only a bounded
+    // number of rows is retained in {@link #data} for display. -1 means the
+    // value was not produced by the streaming path (builder falls back).
+    private long streamedSizeBytes = -1;
+    private String sizeStatsStatus;
+    private String sizeStatsUnavailableReason;
+    private long trueReturnedRows = -1;
+    private boolean truncated;
+
 
     public long getTotalTimeUsed() {
         if (this.hasResultSet) {

@@ -10,6 +10,7 @@ import com.alibaba.druid.sql.ast.statement.SQLSelectStatement;
 import com.alibaba.druid.sql.ast.statement.SQLUpdateStatement;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import org.jumpserver.chen.framework.audit.SizeCalculator;
 import org.jumpserver.chen.framework.datasource.ConnectionManager;
 import org.jumpserver.chen.framework.datasource.entity.resource.Field;
 import org.jumpserver.chen.framework.datasource.sql.*;
@@ -130,11 +131,38 @@ public abstract class BaseSQLActuator implements SQLActuator {
         result.setQueryLimit(plan.getQueryLimit());
         result.setLimitSource(plan.getLimitSource());
         result.setManualLimitDetected(plan.isManualLimitDetected());
+        boolean streamingExport = plan.getRowConsumer() != null;
+        Connection planConn = plan.getConnection();
+        Boolean priorAutoCommit = null;
         try {
+            // Streaming export reads the full result row-by-row to disk. For a
+            // server-side cursor to actually stream (rather than the driver
+            // buffering the whole result client-side and risking OOM), some
+            // drivers — notably PostgreSQL — require autoCommit=false. A SELECT
+            // commits nothing, so toggling this for the read is invisible to the
+            // client; we restore the prior value in finally so the pooled
+            // connection is handed back unchanged.
+            if (streamingExport && planConn != null && planConn.getAutoCommit()) {
+                priorAutoCommit = Boolean.TRUE;
+                planConn.setAutoCommit(false);
+            }
             Statement statement = plan.createStatement();
             applyQueryTimeout(statement, plan);
+            applyFetchStreaming(statement, plan);
             this.executeStatement(plan, statement, result);
         } finally {
+            if (priorAutoCommit != null) {
+                try {
+                    planConn.commit();
+                } catch (SQLException e) {
+                    log.debug("commit after streaming export failed (non-fatal): {}", e.getMessage());
+                }
+                try {
+                    planConn.setAutoCommit(priorAutoCommit);
+                } catch (SQLException e) {
+                    log.debug("restore autoCommit after streaming export failed (non-fatal): {}", e.getMessage());
+                }
+            }
             if (plan.getConnection() instanceof DruidPooledConnection) {
                 plan.getConnection().close();
             }
@@ -166,6 +194,41 @@ public abstract class BaseSQLActuator implements SQLActuator {
         }
     }
 
+    /**
+     * Enable driver-side cursor streaming so a large result set is not
+     * buffered client-side in full before the fetch loop starts. Without
+     * this, MySQL in particular reads the whole result into heap up front,
+     * defeating the bounded-retention fetch loop and risking OOM.
+     *
+     * <ul>
+     *   <li>MySQL: row-by-row streaming requires the magic
+     *       {@code setFetchSize(Integer.MIN_VALUE)} on a forward-only,
+     *       read-only statement (the default {@code createStatement()}).</li>
+     *   <li>PostgreSQL: a positive fetch size enables a server-side cursor,
+     *       but only when the connection is not in autocommit mode; if it is,
+     *       the driver silently buffers everything (validation point).</li>
+     *   <li>SQL Server (mssql-jdbc): adaptive buffering is on by default; a
+     *       positive fetch size is a harmless hint.</li>
+     * </ul>
+     *
+     * Failures are non-fatal and degrade to the previous buffering behavior.
+     */
+    private static void applyFetchStreaming(Statement statement, SQLExecutePlan plan) {
+        if (statement == null || plan == null) {
+            return;
+        }
+        try {
+            DbType dbType = plan.getDruidDbType();
+            if (dbType == DbType.mysql || dbType == DbType.mariadb) {
+                statement.setFetchSize(Integer.MIN_VALUE);
+            } else {
+                statement.setFetchSize(1000);
+            }
+        } catch (Throwable t) {
+            log.debug("setFetchSize failed (non-fatal): {}", t.getMessage());
+        }
+    }
+
     private void executeStatement(SQLExecutePlan plan, Statement statement, SQLQueryResult result) throws SQLException {
         try (statement) {
             result.setStartTime(new Time(System.currentTimeMillis()));
@@ -183,6 +246,17 @@ public abstract class BaseSQLActuator implements SQLActuator {
                     field.setName(resultSet.getMetaData().getColumnName(i));
                     result.getFields().add(field);
                 }
+
+                int cap = QueryPolicyHolder.current().getMaxRows();
+                RowConsumer sink = plan.getRowConsumer();
+                if (sink != null) {
+                    sink.begin(result.getFields());
+                }
+
+                long sizeBytes = 0;
+                long rowCount = 0;
+                boolean statsOk = true;
+                String statsReason = null;
 
                 while (resultSet.next()) {
                     List<Object> fs = new ArrayList<>();
@@ -204,17 +278,44 @@ public abstract class BaseSQLActuator implements SQLActuator {
                             log.error(e.getMessage());
                         }
                     }
-                    result.getData().add(fs);
+                    rowCount++;
+                    if (statsOk) {
+                        try {
+                            sizeBytes += SizeCalculator.addRowBytes(result.getFields(), fs);
+                        } catch (RuntimeException e) {
+                            statsOk = false;
+                            statsReason = e.getClass().getSimpleName();
+                        }
+                    }
+                    if (sink != null) {
+                        sink.accept(fs);
+                    } else if (result.getData().size() < cap) {
+                        result.getData().add(fs);
+                    } else {
+                        result.setTruncated(true);
+                    }
                 }
                 resultSet.close();
                 result.setFetchFinishedTime(new Time(System.currentTimeMillis()));
 
-                var total = this.count(plan);
-                if (total < 0) {
-                    result.setTotal(result.getData().size());
+                result.setTrueReturnedRows(rowCount);
+                result.setStreamedSizeBytes(statsOk ? sizeBytes : 0);
+                result.setSizeStatsStatus(statsOk
+                        ? SizeCalculator.STATUS_OK : SizeCalculator.STATUS_UNAVAILABLE);
+                result.setSizeStatsUnavailableReason(statsReason);
+
+                if (sink != null) {
+                    // Streaming export: rows were not retained and no total is
+                    // needed, so skip the extra full-table count scan.
+                    result.setTotal((int) rowCount);
                 } else {
-                    result.setPaged(true);
-                    result.setTotal(total);
+                    var total = this.count(plan);
+                    if (total < 0) {
+                        result.setTotal((int) rowCount);
+                    } else {
+                        result.setPaged(true);
+                        result.setTotal(total);
+                    }
                 }
 
             } else {

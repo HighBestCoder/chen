@@ -8,6 +8,7 @@ import org.jumpserver.chen.framework.console.entity.response.SQLResult;
 import org.jumpserver.chen.framework.console.state.DataViewState;
 import org.jumpserver.chen.framework.console.state.StateManager;
 import org.jumpserver.chen.framework.datasource.entity.resource.Field;
+import org.jumpserver.chen.framework.datasource.sql.RowConsumer;
 import org.jumpserver.chen.framework.datasource.sql.SQLQueryParams;
 import org.jumpserver.chen.framework.datasource.sql.SQLQueryResult;
 import org.jumpserver.chen.framework.jms.entity.CommandRecord;
@@ -83,7 +84,7 @@ public class DataView extends SQLResult {
         queryParams.setOffset((this.state.getPage() - 1) * this.state.getLimit());
 
         var result = this.loadDataInterface
-                .loadData(queryParams);
+                .loadData(queryParams, null);
 
         this.fullData(result);
     }
@@ -137,6 +138,22 @@ public class DataView extends SQLResult {
         writer.write(str);
     }
 
+    private static void writeRow(BufferedWriter writer, List<Field> fields, List<Object> row) throws IOException {
+        for (int i = 0; i < fields.size(); i++) {
+            Object obj = i < row.size() ? row.get(i) : null;
+            if (obj == null) {
+                writer.write("NULL");
+            } else if (obj instanceof Date) {
+                SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+                writeString(writer, fmt.format(obj));
+            } else {
+                writeString(writer, obj);
+            }
+            writer.write(",");
+        }
+        writer.newLine();
+    }
+
     public void export(String scope) throws SQLException {
         var session = SessionManager.getCurrentSession();
 
@@ -147,12 +164,13 @@ public class DataView extends SQLResult {
 
         CommandRecord command = new CommandRecord(String.format("Export data: %s", this.title));
 
+        BufferedWriter writer = null;
         try {
             if (!SessionManager.getCurrentSession().canDownload()) {
                 session.getController().sendFile(f.getName());
                 return;
             }
-            var writer = Files.newBufferedWriter(f.toPath());
+            writer = Files.newBufferedWriter(f.toPath());
             // UTF-8 BOM so Excel opens non-ASCII (e.g. CJK) CSV without mojibake.
             writer.write('\uFEFF');
 
@@ -187,36 +205,55 @@ public class DataView extends SQLResult {
             if (scope.equals("all")) {
                 SQLQueryParams queryParams = new SQLQueryParams();
                 queryParams.setLimit(-1);
-                var result = this.loadDataInterface.loadData(queryParams);
 
-                for (Field field : result.getFields()) {
-                    writer.write(field.getName());
-                    writer.write(",");
-                }
-                writer.newLine();
+                final BufferedWriter w = writer;
+                final long[] written = {0};
 
-                for (List<Object> row : result.getData()) {
-                    for (Object o : row) {
-                        if (o == null) {
-                            writer.write("NULL");
-                            writer.write(",");
-                        } else {
-                            writer.write(o.toString());
-                            writer.write(",");
+                this.loadDataInterface.loadData(queryParams, new RowConsumer() {
+                    private List<Field> fields;
+
+                    @Override
+                    public void begin(List<Field> fs) throws SQLException {
+                        this.fields = fs;
+                        try {
+                            for (Field field : fs) {
+                                w.write(field.getName());
+                                w.write(",");
+                            }
+                            w.newLine();
+                        } catch (IOException e) {
+                            throw new SQLException(e);
                         }
                     }
-                    writer.newLine();
-                }
-                command.setOutput(String.format("%d rows exported", result.getData().size()));
+
+                    @Override
+                    public void accept(List<Object> row) throws SQLException {
+                        try {
+                            writeRow(w, this.fields, row);
+                        } catch (IOException e) {
+                            throw new SQLException(e);
+                        }
+                        written[0]++;
+                    }
+                });
+
+                command.setOutput(String.format("%d rows exported", written[0]));
             }
             writer.flush();
-            writer.close();
 
             this.consoleLogger.success(command.getOutput());
             session.recordCommand(command);
 
         } catch (IOException e) {
             throw new RuntimeException(e);
+        } finally {
+            if (writer != null) {
+                try {
+                    writer.close();
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            }
         }
         session.getController().sendFile(f.getName());
     }
