@@ -4,6 +4,7 @@ import org.jumpserver.chen.framework.datasource.entity.resource.Field;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Computes the contract's "data size = impact-column field length x rows"
@@ -16,6 +17,7 @@ import java.util.List;
 public final class SizeCalculator {
 
     public static final String STATUS_OK = "ok";
+    public static final String STATUS_PARTIAL = "partial";
     public static final String STATUS_UNAVAILABLE = "unavailable";
 
     public static final class Result {
@@ -70,5 +72,26 @@ public final class SizeCalculator {
             }
         }
         return total;
+    }
+
+    /**
+     * Incrementally accumulates UTF-8 byte length per resolved column key.
+     * The key list is positional and must be aligned to the row values. This
+     * mirrors {@link #addRowBytes(List, List)} without retaining any row data.
+     */
+    public static void addRowBytesByColumn(List<String> columnKeys, List<Object> row, Map<String, Long> acc) {
+        if (columnKeys == null || row == null || acc == null) {
+            return;
+        }
+        int upto = Math.min(columnKeys.size(), row.size());
+        for (int i = 0; i < upto; i++) {
+            String key = columnKeys.get(i);
+            Object value = row.get(i);
+            if (key == null || key.isEmpty() || value == null) {
+                continue;
+            }
+            long bytes = value.toString().getBytes(StandardCharsets.UTF_8).length;
+            acc.merge(key, bytes, Long::sum);
+        }
     }
 }

@@ -4,7 +4,9 @@ import org.jumpserver.chen.framework.datasource.entity.resource.Field;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 
 /**
@@ -57,6 +59,14 @@ public class TestStreamingSizeParity {
             streamed += SizeCalculator.addRowBytes(oneField, r);
         }
         report("impact-column bound to fields.size()", streamed == hand, hand, streamed);
+
+        Map<String, Long> byColumn = new LinkedHashMap<>();
+        SizeCalculator.addRowBytesByColumn(Arrays.asList("user.name", "user.note"),
+                row("张三", "abc", "ignored"), byColumn);
+        report("per-column cjk byte size",
+                Long.valueOf(6L).equals(byColumn.get("user.name")), 6L, byColumn.get("user.name"));
+        report("per-column ascii byte size",
+                Long.valueOf(3L).equals(byColumn.get("user.note")), 3L, byColumn.get("user.note"));
 
         // ---- Randomized fuzz ----
         Random rnd = new Random(42);
