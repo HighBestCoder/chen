@@ -5,7 +5,9 @@ import org.jumpserver.chen.framework.datasource.sql.SQLQueryResult;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Probe that {@link SqlExecutionStatsBuilder#fromSuccess} consumes the
@@ -56,7 +58,12 @@ public class TestStreamingStatsBuilder {
 
         result.setTrueReturnedRows(1_000_000L);
         result.setStreamedSizeBytes(987654L);
+        Map<String, Long> streamedByColumn = new LinkedHashMap<>();
+        streamedByColumn.put("big.name", 500000L);
+        streamedByColumn.put("big.age", 487654L);
+        result.setStreamedSizeByColumn(streamedByColumn);
         result.setSizeStatsStatus("ok");
+        result.setSizeByColumnSourceStatus("ok");
         result.setTruncated(true);
 
         ExecutionStats stats = SqlExecutionStatsBuilder.fromSuccess(null, "SELECT name, age FROM big", result);
@@ -68,6 +75,12 @@ public class TestStreamingStatsBuilder {
         report("size_stats_status propagated",
                 "ok".equals(stats.getExtras().get("size_stats_status")),
                 "ok", stats.getExtras().get("size_stats_status"));
+        report("size_by_column propagated",
+                streamedByColumn.equals(stats.getExtras().get("size_by_column")),
+                streamedByColumn, stats.getExtras().get("size_by_column"));
+        report("size_by_column_source_status propagated",
+                "ok".equals(stats.getExtras().get("size_by_column_source_status")),
+                "ok", stats.getExtras().get("size_by_column_source_status"));
         report("result_truncated recorded",
                 Boolean.TRUE.equals(stats.getExtras().get("result_truncated")),
                 true, stats.getExtras().get("result_truncated"));
@@ -109,6 +122,7 @@ public class TestStreamingStatsBuilder {
         for (String n : names) {
             Field f = new Field();
             f.setName(n);
+            f.setTable("t");
             fs.add(f);
         }
         return fs;

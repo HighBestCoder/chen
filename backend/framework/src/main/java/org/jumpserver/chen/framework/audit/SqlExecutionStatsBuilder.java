@@ -5,7 +5,9 @@ import org.jumpserver.chen.framework.datasource.entity.DatasourceInfo;
 import org.jumpserver.chen.framework.datasource.entity.resource.Field;
 import org.jumpserver.chen.framework.datasource.sql.SQLQueryResult;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -57,7 +59,7 @@ public final class SqlExecutionStatsBuilder {
                 stats.setTotalRows((long) result.getTotal());
             }
             stats.setImpactColumns(extractColumnNames(result.getFields()));
-            applySizeStats(stats, result, data);
+            applySizeStats(stats, result, data, command, datasource == null ? null : datasource.getDruidDbType());
             stats.putExtra("result_truncated", result.isTruncated());
         } else {
             stats.setAffectedRows((long) result.getUpdateCount());
@@ -65,7 +67,8 @@ public final class SqlExecutionStatsBuilder {
         return stats;
     }
 
-    private static void applySizeStats(ExecutionStats stats, SQLQueryResult result, List<List<Object>> data) {
+    private static void applySizeStats(ExecutionStats stats, SQLQueryResult result, List<List<Object>> data,
+                                       String command, com.alibaba.druid.DbType dbType) {
         // Prefer the size accumulated over the FULL result during the streaming
         // fetch loop; the retained {@code data} may be capped for display.
         if (result.getStreamedSizeBytes() >= 0) {
@@ -76,6 +79,7 @@ public final class SqlExecutionStatsBuilder {
             if (result.getSizeStatsUnavailableReason() != null) {
                 stats.putExtra("size_stats_unavailable_reason", result.getSizeStatsUnavailableReason());
             }
+            applyStreamedColumnSizeStats(stats, result);
             return;
         }
         SizeCalculator.Result size = SizeCalculator.compute(result.getFields(), data);
@@ -85,6 +89,49 @@ public final class SqlExecutionStatsBuilder {
         stats.putExtra("size_stats_status", size.status);
         if (size.unavailableReason != null) {
             stats.putExtra("size_stats_unavailable_reason", size.unavailableReason);
+        }
+        applyMaterializedColumnSizeStats(stats, result, data, command, dbType);
+    }
+
+    private static void applyStreamedColumnSizeStats(ExecutionStats stats, SQLQueryResult result) {
+        Map<String, Long> byColumn = result.getStreamedSizeByColumn();
+        if (byColumn != null && !byColumn.isEmpty()) {
+            stats.putExtra("size_by_column", byColumn);
+        }
+        if (result.getSizeByColumnSourceStatus() != null) {
+            stats.putExtra("size_by_column_source_status", result.getSizeByColumnSourceStatus());
+        }
+        if (result.getSizeByColumnSourceUnavailableReason() != null) {
+            stats.putExtra("size_by_column_source_unavailable_reason",
+                    result.getSizeByColumnSourceUnavailableReason());
+        }
+    }
+
+    private static void applyMaterializedColumnSizeStats(ExecutionStats stats, SQLQueryResult result,
+                                                         List<List<Object>> data, String command,
+                                                         com.alibaba.druid.DbType dbType) {
+        if (result.getFields() == null || data == null) {
+            return;
+        }
+        try {
+            ColumnSizeKeyResolver.ResolveResult keys = ColumnSizeKeyResolver.resolve(command, dbType, result.getFields());
+            Map<String, Long> byColumn = new LinkedHashMap<>();
+            for (List<Object> row : data) {
+                SizeCalculator.addRowBytesByColumn(keys.getKeys(), row, byColumn);
+            }
+            if (!byColumn.isEmpty()) {
+                stats.putExtra("size_by_column", byColumn);
+            }
+            stats.putExtra("size_by_column_source_status",
+                    result.isTruncated() ? SizeCalculator.STATUS_PARTIAL : keys.getStatus());
+            if (result.isTruncated()) {
+                stats.putExtra("size_by_column_source_unavailable_reason", "materialized result truncated");
+            } else if (keys.getUnavailableReason() != null) {
+                stats.putExtra("size_by_column_source_unavailable_reason", keys.getUnavailableReason());
+            }
+        } catch (RuntimeException e) {
+            stats.putExtra("size_by_column_source_status", SizeCalculator.STATUS_UNAVAILABLE);
+            stats.putExtra("size_by_column_source_unavailable_reason", e.getClass().getSimpleName());
         }
     }
 
