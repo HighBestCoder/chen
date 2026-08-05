@@ -21,10 +21,15 @@ public class MongoResultTableAdapter {
             JsonWriterSettings.builder().outputMode(JsonMode.RELAXED).build();
 
     public SQLQueryResult toResult(String sql, List<Document> documents, long startMillis, long queryDoneMillis) {
-        return toResult(sql, documents, startMillis, queryDoneMillis, documents.size(), false);
+        return toResult(sql, null, documents, startMillis, queryDoneMillis, documents.size(), false);
     }
 
     public SQLQueryResult toResult(String sql, List<Document> documents, long startMillis,
+                                   long queryDoneMillis, long total, boolean paged) {
+        return toResult(sql, null, documents, startMillis, queryDoneMillis, total, paged);
+    }
+
+    public SQLQueryResult toResult(String sql, String collection, List<Document> documents, long startMillis,
                                    long queryDoneMillis, long total, boolean paged) {
         SQLQueryResult result = new SQLQueryResult(sql);
 
@@ -38,6 +43,7 @@ public class MongoResultTableAdapter {
         for (String key : keys) {
             Field field = new Field();
             field.setName(key);
+            field.setTable(collection);
             field.setType(inferType(documents, key));
             fields.add(field);
         }

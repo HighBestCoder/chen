@@ -66,7 +66,7 @@ public class MongoActuator {
             paged = true;
         }
 
-        return this.adapter.toResult(command.getRawText(), documents, start, queryDone, total, paged);
+        return this.adapter.toResult(command.getRawText(), command.getCollection(), documents, start, queryDone, total, paged);
     }
 
     private int resolveLimit(Integer commandLimit, int consoleLimit) {
