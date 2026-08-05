@@ -2,10 +2,14 @@ package org.jumpserver.chen.modules.mongodb.command;
 
 import org.jumpserver.chen.framework.audit.ExecutionStats;
 import org.jumpserver.chen.framework.audit.SizeCalculator;
+import org.jumpserver.chen.framework.audit.ColumnSizeKeyResolver;
+import org.jumpserver.chen.framework.datasource.entity.resource.Field;
 import org.jumpserver.chen.framework.datasource.sql.SQLQueryResult;
 import org.jumpserver.chen.modules.mongodb.MongoConnectionManager;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -47,8 +51,31 @@ public final class MongoExecutionStatsBuilder {
             if (size.unavailableReason != null) {
                 stats.putExtra("size_stats_unavailable_reason", size.unavailableReason);
             }
+            applyColumnSizeStats(stats, result.getFields(), data);
         }
         return stats;
+    }
+
+    private static void applyColumnSizeStats(ExecutionStats stats, List<Field> fields, List<List<Object>> data) {
+        if (fields == null || data == null) {
+            return;
+        }
+        try {
+            List<String> keys = fields.stream()
+                    .map(ColumnSizeKeyResolver::keyForField)
+                    .collect(Collectors.toList());
+            Map<String, Long> byColumn = new LinkedHashMap<>();
+            for (List<Object> row : data) {
+                SizeCalculator.addRowBytesByColumn(keys, row, byColumn);
+            }
+            if (!byColumn.isEmpty()) {
+                stats.putExtra("size_by_column", byColumn);
+            }
+            stats.putExtra("size_by_column_source_status", SizeCalculator.STATUS_OK);
+        } catch (RuntimeException e) {
+            stats.putExtra("size_by_column_source_status", SizeCalculator.STATUS_UNAVAILABLE);
+            stats.putExtra("size_by_column_source_unavailable_reason", e.getClass().getSimpleName());
+        }
     }
 
     public static ExecutionStats fromFailure(MongoConnectionManager cm, MongoCommand command, Throwable error) {
