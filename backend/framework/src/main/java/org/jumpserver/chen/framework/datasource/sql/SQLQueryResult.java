@@ -8,6 +8,7 @@ import org.jumpserver.chen.framework.jms.acl.ACLResult;
 import java.sql.Time;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 
 @Data
@@ -38,8 +39,11 @@ public class SQLQueryResult {
     // number of rows is retained in {@link #data} for display. -1 means the
     // value was not produced by the streaming path (builder falls back).
     private long streamedSizeBytes = -1;
+    private Map<String, Long> streamedSizeByColumn;
     private String sizeStatsStatus;
     private String sizeStatsUnavailableReason;
+    private String sizeByColumnSourceStatus;
+    private String sizeByColumnSourceUnavailableReason;
     private long trueReturnedRows = -1;
     private boolean truncated;
 

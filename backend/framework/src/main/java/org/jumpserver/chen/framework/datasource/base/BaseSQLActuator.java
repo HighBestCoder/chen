@@ -10,6 +10,7 @@ import com.alibaba.druid.sql.ast.statement.SQLSelectStatement;
 import com.alibaba.druid.sql.ast.statement.SQLUpdateStatement;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import org.jumpserver.chen.framework.audit.ColumnSizeKeyResolver;
 import org.jumpserver.chen.framework.audit.SizeCalculator;
 import org.jumpserver.chen.framework.datasource.ConnectionManager;
 import org.jumpserver.chen.framework.datasource.entity.resource.Field;
@@ -24,6 +25,7 @@ import org.jumpserver.chen.framework.utils.ReflectUtils;
 import java.math.BigInteger;
 import java.sql.*;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -240,12 +242,21 @@ public abstract class BaseSQLActuator implements SQLActuator {
 
             if (hasResult) {
                 var resultSet = statement.getResultSet();
+                var metadata = resultSet.getMetaData();
+                int columnCount = metadata.getColumnCount();
 
-                for (int i = 1; i <= resultSet.getMetaData().getColumnCount(); i++) {
+                for (int i = 1; i <= columnCount; i++) {
                     Field field = new Field();
-                    field.setName(resultSet.getMetaData().getColumnName(i));
+                    field.setName(nonEmpty(metadataString(metadata, i, MetadataField.LABEL),
+                            metadataString(metadata, i, MetadataField.NAME)));
+                    field.setTable(metadataString(metadata, i, MetadataField.TABLE));
+                    field.setSchema(metadataString(metadata, i, MetadataField.SCHEMA));
+                    field.setType(metadataString(metadata, i, MetadataField.TYPE));
                     result.getFields().add(field);
                 }
+
+                ColumnSizeKeyResolver.ResolveResult columnKeys =
+                        ColumnSizeKeyResolver.resolve(plan.getSourceSQL(), plan.getDruidDbType(), result.getFields());
 
                 int cap = QueryPolicyHolder.current().getMaxRows();
                 RowConsumer sink = plan.getRowConsumer();
@@ -257,10 +268,13 @@ public abstract class BaseSQLActuator implements SQLActuator {
                 long rowCount = 0;
                 boolean statsOk = true;
                 String statsReason = null;
+                Map<String, Long> sizeByColumn = new LinkedHashMap<>();
+                boolean columnStatsOk = true;
+                String columnStatsReason = columnKeys.getUnavailableReason();
 
                 while (resultSet.next()) {
                     List<Object> fs = new ArrayList<>();
-                    for (int i = 1; i <= resultSet.getMetaData().getColumnCount(); i++) {
+                    for (int i = 1; i <= columnCount; i++) {
                         try {
                             var obj = resultSet.getObject(i);
                             if (obj instanceof Timestamp timestamp) {
@@ -287,6 +301,14 @@ public abstract class BaseSQLActuator implements SQLActuator {
                             statsReason = e.getClass().getSimpleName();
                         }
                     }
+                    if (columnStatsOk) {
+                        try {
+                            SizeCalculator.addRowBytesByColumn(columnKeys.getKeys(), fs, sizeByColumn);
+                        } catch (RuntimeException e) {
+                            columnStatsOk = false;
+                            columnStatsReason = e.getClass().getSimpleName();
+                        }
+                    }
                     if (sink != null) {
                         sink.accept(fs);
                     } else if (result.getData().size() < cap) {
@@ -303,6 +325,14 @@ public abstract class BaseSQLActuator implements SQLActuator {
                 result.setSizeStatsStatus(statsOk
                         ? SizeCalculator.STATUS_OK : SizeCalculator.STATUS_UNAVAILABLE);
                 result.setSizeStatsUnavailableReason(statsReason);
+                if (columnStatsOk) {
+                    result.setStreamedSizeByColumn(sizeByColumn);
+                    result.setSizeByColumnSourceStatus(columnKeys.getStatus());
+                    result.setSizeByColumnSourceUnavailableReason(columnKeys.getUnavailableReason());
+                } else {
+                    result.setSizeByColumnSourceStatus(SizeCalculator.STATUS_UNAVAILABLE);
+                    result.setSizeByColumnSourceUnavailableReason(columnStatsReason);
+                }
 
                 if (sink != null) {
                     // Streaming export: rows were not retained and no total is
@@ -327,6 +357,35 @@ public abstract class BaseSQLActuator implements SQLActuator {
         } catch (Exception e) {
             throw new SQLException(e.getMessage(), e);
         }
+    }
+
+    private enum MetadataField {
+        LABEL, NAME, TABLE, SCHEMA, TYPE
+    }
+
+    private static String metadataString(ResultSetMetaData metadata, int index, MetadataField field) {
+        try {
+            String value = switch (field) {
+                case LABEL -> metadata.getColumnLabel(index);
+                case NAME -> metadata.getColumnName(index);
+                case TABLE -> metadata.getTableName(index);
+                case SCHEMA -> metadata.getSchemaName(index);
+                case TYPE -> metadata.getColumnTypeName(index);
+            };
+            return value == null ? "" : value;
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    private static String nonEmpty(String primary, String fallback) {
+        if (primary != null && !primary.isEmpty()) {
+            return primary;
+        }
+        if (fallback != null && !fallback.isEmpty()) {
+            return fallback;
+        }
+        return "column";
     }
 
     @Override
