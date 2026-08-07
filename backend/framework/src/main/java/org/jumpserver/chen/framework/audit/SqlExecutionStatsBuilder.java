@@ -154,9 +154,11 @@ public final class SqlExecutionStatsBuilder {
         if (result.getOriginalCommand() != null) {
             stats.setRawCommand(result.getOriginalCommand());
             stats.putExtra("original_command", result.getOriginalCommand());
+            stats.putExtra("original_sql", result.getOriginalCommand());
         }
         if (result.getExecutedCommand() != null) {
             stats.putExtra("executed_command", result.getExecutedCommand());
+            stats.putExtra("executed_sql", result.getExecutedCommand());
         }
         if (result.getLimitSource() != null) {
             stats.putExtra("limit_source", result.getLimitSource());
