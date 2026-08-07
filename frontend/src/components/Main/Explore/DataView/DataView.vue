@@ -97,12 +97,16 @@ export default {
               value: 100
             },
             {
-              label: this.$t('common.num_row', { num: 200 }),
-              value: 200
-            },
-            {
               label: this.$t('common.num_row', { num: 500 }),
               value: 500
+            },
+            {
+              label: this.$t('common.num_row', { num: 5000 }),
+              value: 5000
+            },
+            {
+              label: this.$t('common.num_row', { num: 10000 }),
+              value: 10000
             }
           ],
           onCommand: (command) => {
