@@ -82,8 +82,10 @@ public class SQLExecutePlan {
         }
 
         if (this.getTargetSQLStatement() instanceof SQLSelectStatement selectStatement) {
-            if (PageUtils.getLimit(this.targetSQL, this.druidDbType) > -1) {
+            int manualLimit = PageUtils.getLimit(this.targetSQL, this.druidDbType);
+            if (manualLimit > -1) {
                 this.manualLimitDetected = true;
+                this.queryLimit = manualLimit;
                 this.limitSource = "manual";
                 return;
             }
