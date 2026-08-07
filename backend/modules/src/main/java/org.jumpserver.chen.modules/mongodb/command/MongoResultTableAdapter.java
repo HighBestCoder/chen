@@ -34,9 +34,11 @@ public class MongoResultTableAdapter {
         SQLQueryResult result = new SQLQueryResult(sql);
 
         LinkedHashSet<String> keys = new LinkedHashSet<>();
-        keys.add(ID_FIELD);
         for (Document doc : documents) {
             keys.addAll(doc.keySet());
+        }
+        if (keys.isEmpty()) {
+            keys.add(ID_FIELD);
         }
 
         List<Field> fields = new ArrayList<>();
