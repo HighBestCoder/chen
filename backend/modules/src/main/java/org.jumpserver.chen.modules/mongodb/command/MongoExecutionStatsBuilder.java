@@ -95,6 +95,7 @@ public final class MongoExecutionStatsBuilder {
         stats.setDbType("mongodb");
         if (command != null) {
             stats.setOpType(opType(command.getType()));
+            stats.setRawCommand(command.getRawText());
         }
         if (cm != null) {
             try {
