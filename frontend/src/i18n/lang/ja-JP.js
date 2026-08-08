@@ -29,7 +29,8 @@ const message = {
   },
   option: {
     export_all: 'エクスポートすべて',
-    export_current: 'エクスポート現在'
+    export_current: 'エクスポート現在',
+    export_selected: '選択行をエクスポート'
   },
   msg: {
     copy_not_allowed: 'コピーは許可されていません。管理者に連絡して開放してもらってください！',
