@@ -7,6 +7,7 @@
   >
     <el-form ref="form" :model="form" label-width="80px">
       <el-radio v-model="form.scope" label="current">{{ $tc('option.export_current') }}</el-radio>
+      <el-radio v-model="form.scope" label="selected">{{ $tc('option.export_selected') }}</el-radio>
       <el-radio v-model="form.scope" label="all">{{ $tc('option.export_all') }}</el-radio>
     </el-form>
 
