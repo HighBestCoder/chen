@@ -109,7 +109,9 @@ public class DataViewConsole extends AbstractConsole {
         // from the SQL console's own default (50). The hard cap from
         // QueryPolicy.maxRows still applies in SQLExecutePlan.
         try {
-            int previewLimit = QueryPolicyHolder.current().getDefaultPreviewLimit();
+            int previewLimit = "mongodb".equals(this.getDatasource().getName())
+                    ? 50
+                    : QueryPolicyHolder.current().getDefaultPreviewLimit();
             if (previewLimit > 0) {
                 dataView.getStateManager().getState().setLimit(previewLimit);
             }

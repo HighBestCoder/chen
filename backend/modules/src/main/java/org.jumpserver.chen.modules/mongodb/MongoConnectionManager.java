@@ -30,7 +30,7 @@ public class MongoConnectionManager implements ConnectionManager {
 
     private final DBConnectInfo connectInfo;
     private final Datasource datasource;
-    private final SQLActuator sqlActuatorStub = new MongoSqlActuatorStub();
+    private final SQLActuator sqlActuatorStub;
 
     private MongoClient client;
     private String databaseContext;
@@ -39,6 +39,7 @@ public class MongoConnectionManager implements ConnectionManager {
         this.connectInfo = connectInfo;
         this.datasource = datasource;
         this.databaseContext = connectInfo.getDb();
+        this.sqlActuatorStub = new MongoSqlActuatorStub(this);
     }
 
     private synchronized MongoClient client() {
