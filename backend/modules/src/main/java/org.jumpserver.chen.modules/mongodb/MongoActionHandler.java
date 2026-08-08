@@ -6,13 +6,10 @@ import org.jumpserver.chen.framework.datasource.entity.action.EventEmitter;
 import org.jumpserver.chen.framework.datasource.entity.form.FormData;
 import org.jumpserver.chen.framework.datasource.entity.resource.TreeNode;
 import org.jumpserver.chen.framework.i18n.MessageUtils;
-import org.jumpserver.chen.framework.utils.TreeUtils;
 
 import java.util.List;
 
 public class MongoActionHandler implements ActionHandler {
-
-    private static final int PREVIEW_LIMIT = 50;
 
     @Override
     public List<Action> getActions(TreeNode node) {
@@ -60,7 +57,7 @@ public class MongoActionHandler implements ActionHandler {
     public EventEmitter doAction(TreeNode node, String action) {
         return switch (action) {
             case "new_query" -> EventEmitter.of("new_query", node.getKey());
-            case "preview" -> EventEmitter.of("run_query", previewCommand(node));
+            case "preview", "show" -> EventEmitter.of("view_data", node.getKey());
             case "refresh_node" -> EventEmitter.of("refresh_node", node.getKey());
             default -> EventEmitter.of("blank", null);
         };
@@ -69,11 +66,6 @@ public class MongoActionHandler implements ActionHandler {
     @Override
     public EventEmitter handleForm(FormData formData) {
         return null;
-    }
-
-    private String previewCommand(TreeNode node) {
-        String collection = TreeUtils.getValue(node.getKey(), "table");
-        return String.format("db.%s.find({}).limit(%d)", collection, PREVIEW_LIMIT);
     }
 
     private Action newQuery() {
