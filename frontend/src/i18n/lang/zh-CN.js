@@ -35,7 +35,8 @@ const message = {
   },
   option: {
     export_all: '导出全部',
-    export_current: '导出当前'
+    export_current: '导出当前',
+    export_selected: '导出选中'
   },
   message: {
     save_success: '保存成功'

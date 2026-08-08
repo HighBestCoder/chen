@@ -29,7 +29,8 @@ const message = {
   },
   option: {
     export_all: 'Export all data',
-    export_current: 'Export current page'
+    export_current: 'Export current page',
+    export_selected: 'Export selected rows'
   },
   msg: {
     copy_not_allowed: 'You are not allowed to copy, please contact the administrator to open it!',
