@@ -39,6 +39,10 @@ public class TestMongoExecutionStatsBuilder {
         Object byColumn = stats.getExtras().get("size_by_column");
         report("size_by_column exact", Map.of("t02_size_rows.name", 8L, "t02_size_rows.city", 12L).equals(byColumn),
                 Map.of("t02_size_rows.name", 8L, "t02_size_rows.city", 12L), byColumn);
+        Object columnSize = stats.getExtras().get("column_size");
+        report("column_size alias exact", Map.of("t02_size_rows.name", 8L, "t02_size_rows.city", 12L).equals(columnSize),
+                Map.of("t02_size_rows.name", 8L, "t02_size_rows.city", 12L), columnSize);
+        report("column_size alias is independent map", byColumn != columnSize, true, byColumn == columnSize);
     }
 
     private static <T> void report(String label, boolean ok, T expected, T actual) {

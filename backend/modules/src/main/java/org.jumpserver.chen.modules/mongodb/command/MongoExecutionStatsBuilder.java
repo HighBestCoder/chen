@@ -70,6 +70,7 @@ public final class MongoExecutionStatsBuilder {
             }
             if (!byColumn.isEmpty()) {
                 stats.putExtra("size_by_column", byColumn);
+                stats.putExtra("column_size", new LinkedHashMap<>(byColumn));
             }
             stats.putExtra("size_by_column_source_status", SizeCalculator.STATUS_OK);
         } catch (RuntimeException e) {
