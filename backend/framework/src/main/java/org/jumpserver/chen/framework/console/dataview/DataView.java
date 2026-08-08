@@ -22,6 +22,7 @@ import java.sql.SQLException;
 import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -73,7 +74,7 @@ public class DataView extends SQLResult {
                 this.changeLimit((int) action.getData());
             }
             case DataViewAction.ACTION_EXPORT -> {
-                this.export((String) action.getData());
+                this.export(action.getData());
             }
         }
     }
@@ -132,14 +133,17 @@ public class DataView extends SQLResult {
     private static void writeString(BufferedWriter writer, Object object) throws IOException {
         var str = object.toString();
 
-        if (str.contains(",")) {
-            str = "\"" + str + "\"";
+        if (str.contains(",") || str.contains("\"") || str.contains("\n") || str.contains("\r")) {
+            str = "\"" + str.replace("\"", "\"\"") + "\"";
         }
         writer.write(str);
     }
 
     private static void writeRow(BufferedWriter writer, List<Field> fields, List<Object> row) throws IOException {
         for (int i = 0; i < fields.size(); i++) {
+            if (i > 0) {
+                writer.write(",");
+            }
             Object obj = i < row.size() ? row.get(i) : null;
             if (obj == null) {
                 writer.write("NULL");
@@ -149,18 +153,19 @@ public class DataView extends SQLResult {
             } else {
                 writeString(writer, obj);
             }
-            writer.write(",");
         }
         writer.newLine();
     }
 
-    public void export(String scope) throws SQLException {
+    public void export(Object request) throws SQLException {
         var session = SessionManager.getCurrentSession();
+        ExportRequest exportRequest = ExportRequest.from(request);
+        String scope = exportRequest.scope();
 
 
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS");
         String timestamp = LocalDateTime.now().format(formatter);
-        var f = session.createFile(String.format("data_%s.csv", timestamp));
+        var f = session.createFile(String.format("data_%s_%d.csv", timestamp, System.nanoTime()));
 
         CommandRecord command = new CommandRecord(String.format("Export data: %s", this.title));
 
@@ -175,31 +180,14 @@ public class DataView extends SQLResult {
             writer.write('\uFEFF');
 
             if (scope.equals("current")) {
-                for (Field field : this.data.getFields()) {
-                    writeString(writer, field.getName());
-                    writer.write(",");
-                }
-                writer.newLine();
-
-                for (Map<String, Object> row : this.data.getData()) {
-                    for (Field field : this.data.getFields()) {
-                        if (row.get(field.getName()) == null) {
-                            writer.write("NULL");
-                            writer.write(",");
-                        } else {
-                            var obj = row.get(field.getName());
-                            if (obj instanceof Date) {
-                                SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-                                writeString(writer, fmt.format(obj));
-                            } else {
-                                writeString(writer, obj);
-                            }
-                            writer.write(",");
-                        }
-                    }
-                    writer.newLine();
-                }
+                writeMappedRows(writer, this.data.getFields(), this.data.getData());
                 command.setOutput(String.format("%d rows exported", this.data.getData().size()));
+            }
+
+            if (scope.equals("selected")) {
+                List<Map<String, Object>> selectedRows = exportRequest.rows();
+                writeMappedRows(writer, this.data.getFields(), selectedRows);
+                command.setOutput(String.format("%d rows exported", selectedRows.size()));
             }
 
             if (scope.equals("all")) {
@@ -256,6 +244,69 @@ public class DataView extends SQLResult {
             }
         }
         session.getController().sendFile(f.getName());
+    }
+
+    private static void writeMappedRows(BufferedWriter writer, List<Field> fields, List<Map<String, Object>> rows)
+            throws IOException {
+        for (int i = 0; i < fields.size(); i++) {
+            if (i > 0) {
+                writer.write(",");
+            }
+            writeString(writer, fields.get(i).getName());
+        }
+        writer.newLine();
+
+        for (Map<String, Object> row : rows) {
+            for (int i = 0; i < fields.size(); i++) {
+                if (i > 0) {
+                    writer.write(",");
+                }
+                Field field = fields.get(i);
+                Object obj = row.get(field.getName());
+                if (obj == null) {
+                    writer.write("NULL");
+                } else if (obj instanceof Date) {
+                    SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+                    writeString(writer, fmt.format(obj));
+                } else {
+                    writeString(writer, obj);
+                }
+            }
+            writer.newLine();
+        }
+    }
+
+    private record ExportRequest(String scope, List<Map<String, Object>> rows) {
+        static ExportRequest from(Object request) {
+            if (request instanceof Map<?, ?> map) {
+                Object scope = map.get("scope");
+                Object rows = map.get("rows");
+                return new ExportRequest(
+                        scope == null ? "current" : scope.toString(),
+                        parseRows(rows));
+            }
+            return new ExportRequest(request == null ? "current" : request.toString(), List.of());
+        }
+
+        private static List<Map<String, Object>> parseRows(Object value) {
+            if (!(value instanceof List<?> rawRows)) {
+                return List.of();
+            }
+            List<Map<String, Object>> parsed = new ArrayList<>();
+            for (Object rawRow : rawRows) {
+                if (!(rawRow instanceof Map<?, ?> rawMap)) {
+                    continue;
+                }
+                Map<String, Object> row = new HashMap<>();
+                for (Map.Entry<?, ?> entry : rawMap.entrySet()) {
+                    if (entry.getKey() != null) {
+                        row.put(entry.getKey().toString(), entry.getValue());
+                    }
+                }
+                parsed.add(row);
+            }
+            return parsed;
+        }
     }
 
 
