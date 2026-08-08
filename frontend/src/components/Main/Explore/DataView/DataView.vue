@@ -152,6 +152,7 @@ export default {
       },
       hotSettings: {
         contextMenu: false,
+        selectionMode: 'multiple',
         // multiColumnSorting: true,
         rowHeaders: true,
         wordWrap: false,
@@ -236,7 +237,29 @@ export default {
     },
     onExportSubmit(scope) {
       this.exportDataDialogVisible = false
+      if (scope === 'selected') {
+        this.$emit('action', { action: 'export', data: { scope, rows: this.getSelectedRows() }})
+        return
+      }
       this.$emit('action', { action: 'export', data: scope })
+    },
+    getSelectedRows() {
+      const hotInstance = this.$refs.hostTable.hotInstance
+      const ranges = hotInstance.getSelectedRange() || []
+      const selected = []
+      const seen = new Set()
+      ranges.forEach((range) => {
+        const from = Math.min(range.from.row, range.to.row)
+        const to = Math.max(range.from.row, range.to.row)
+        for (let row = from; row <= to; row++) {
+          if (row < 0 || row >= this.data.data.length || seen.has(row)) {
+            continue
+          }
+          seen.add(row)
+          selected.push(this.data.data[row])
+        }
+      })
+      return selected
     }
   }
 
