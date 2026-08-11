@@ -52,6 +52,7 @@ import Toolbar from '@/framework/components/Toolbar/index.vue'
 import { CodeMirror } from 'vue-codemirror'
 
 import 'codemirror/mode/sql/sql.js'
+import 'codemirror/mode/javascript/javascript.js'
 import 'codemirror/theme/eclipse.css'
 import 'codemirror/theme/3024-night.css'
 import 'codemirror/addon/display/autorefresh'
@@ -62,6 +63,7 @@ import 'codemirror/addon/lint/lint'
 import 'codemirror/addon/edit/closebrackets.js'
 import 'codemirror/addon/edit/matchbrackets.js'
 import { getHints } from '@/api/resource'
+import { formatMongoCommand } from '@/utils/mongoFormatter'
 import SelectSnippetDialog from '@/components/Main/Explore/QueryConsole/SelectSnippetDialog.vue'
 import SaveSnippetDialog from '@/components/Main/Explore/QueryConsole/SaveSnippetDialog.vue'
 
@@ -73,7 +75,8 @@ const formatterMap = {
   'oracle': 'plsql',
   'sqlserver': 'tsql',
   'db2': 'db2',
-  'dameng': 'dameng'
+  'dameng': 'dameng',
+  'mongodb': 'javascript'
 }
 const modeMap = {
   'clickhouse': 'text/x-sql',
@@ -83,8 +86,11 @@ const modeMap = {
   'oracle': 'text/x-plsql',
   'sqlserver': 'text/x-mssql',
   'db2': 'text/x-sql',
-  'dameng': 'text/x-sql'
+  'dameng': 'text/x-sql',
+  'mongodb': 'javascript'
 }
+
+const mongoKeywords = ['db', 'find', 'show dbs', 'show collections', 'use', 'limit', 'sort', 'ISODate']
 
 export default {
   name: 'CodeEditor',
@@ -238,7 +244,7 @@ export default {
         this.currentContext = val.currentContext
       }
       this.rightToolbarItems.selectContext.options = val.contexts?.map((context) => {
-        const label = context === val.selectContext ? '✔️' + context : context
+        const label = context === val.currentContext ? '✔️' + context : context
         return { label: label, value: context }
       })
     }
@@ -259,6 +265,10 @@ export default {
       this.$emit('action', { action: 'cancel' })
     },
     onFormat() {
+      if (store.getters.profile?.dbType === 'mongodb') {
+        this.statement = formatMongoCommand(this.statement)
+        return
+      }
       const lang = formatterMap[store.getters.profile?.dbType]
       this.statement = format(this.statement, { language: lang })
     },
@@ -270,10 +280,30 @@ export default {
       if (origin === '+input' && text[0].trim()) {
         if (this.autoComplete) {
           cm.showHint({
-            hint: CodeMirror.hint.sql,
+            hint: store.getters.profile?.dbType === 'mongodb' ? this.mongoHint : CodeMirror.hint.sql,
             completeSingle: false
           })
         }
+      }
+    },
+    mongoHint(cm) {
+      const cursor = cm.getCursor()
+      const token = cm.getTokenAt(cursor)
+      const prefix = token.string || ''
+      const tables = this.options.hintOptions.tables || {}
+      const suggestions = new Set(mongoKeywords)
+      Object.values(tables).forEach((items) => {
+        if (Array.isArray(items)) {
+          items.forEach((item) => suggestions.add(item))
+        }
+      })
+      const list = Array.from(suggestions)
+        .filter((item) => item.toLowerCase().includes(prefix.toLowerCase()))
+        .sort()
+      return {
+        list,
+        from: CodeMirror.Pos(cursor.line, token.start),
+        to: CodeMirror.Pos(cursor.line, token.end)
       }
     },
     refreshHints(context) {
@@ -287,7 +317,7 @@ export default {
     onUploadSuccess(resp, file, fileList) {
       this.$emit('action', { action: 'run_sql_file', data: resp.path })
     },
-    onUploadError(err, file, fileList) {
+    onUploadError() {
       this.state.inQuery = false
     }
   }
