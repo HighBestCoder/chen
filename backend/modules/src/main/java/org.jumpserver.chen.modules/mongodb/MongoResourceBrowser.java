@@ -33,7 +33,7 @@ public class MongoResourceBrowser implements ResourceBrowser {
 
     public MongoResourceBrowser(MongoConnectionManager connectionManager) {
         this.connectionManager = connectionManager;
-        this.sqlHintsHandler = new MongoSqlHintsHandlerStub();
+        this.sqlHintsHandler = new MongoSqlHintsHandlerStub(connectionManager);
     }
 
     @Override
