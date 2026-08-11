@@ -51,7 +51,12 @@ public class MongoCommandParser {
             return MongoCommand.useDb(text, db);
         }
         if (lower.startsWith("db.")) {
-            return parseFind(text);
+            try {
+                return parseFind(text);
+            } catch (MongoCommandException e) {
+                throw new MongoCommandException(
+                        "Unsupported command. Allowed: find / show dbs / show collections / use <db>");
+            }
         }
         throw new MongoCommandException("Unsupported command. Allowed: find / show dbs / show collections / use <db>");
     }
