@@ -25,7 +25,6 @@ import org.jumpserver.chen.modules.mongodb.command.MongoExecutionStatsBuilder;
 import org.jumpserver.chen.wisp.Common;
 import org.springframework.web.socket.WebSocketSession;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -210,16 +209,6 @@ public class MongoQueryConsole extends AbstractConsole {
     }
 
     private void sendDataView(DataView dataView) {
-        var forDelete = new ArrayList<String>();
-        for (var title : this.dataViews.keySet()) {
-            if (!dataView.getTitle().equals(title)
-                    && !this.dataViews.get(title).getStateManager().getState().isPinned()) {
-                forDelete.add(title);
-            }
-        }
-        forDelete.forEach(this.dataViews.keySet()::remove);
-        this.getPacketIO().sendPacket("close_data_view", forDelete);
-
         if (!this.dataViews.containsKey(dataView.getTitle())) {
             this.getPacketIO().sendPacket("new_data_view", Map.of("title", dataView.getTitle()));
         }
