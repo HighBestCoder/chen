@@ -25,6 +25,7 @@
 <script>
 import store from '@/store'
 import { getSnippets } from '@/api/jms'
+import { snippetMatchesDb } from '@/utils/commandSnippets'
 
 export default {
   name: 'SelectSnippetDialog',
@@ -56,7 +57,7 @@ export default {
     loadSnippets() {
       const sqlType = store.getters.profile?.dbType
       getSnippets().then(data => {
-        this.snippets = data.filter(item => item.module.value === sqlType)
+        this.snippets = data.filter(item => snippetMatchesDb(item, sqlType))
       })
     },
     onSelectSnippet(item) {

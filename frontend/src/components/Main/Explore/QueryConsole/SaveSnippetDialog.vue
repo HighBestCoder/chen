@@ -22,6 +22,7 @@
 import axios from 'axios'
 import VueCookie from 'vue-cookie'
 import store from '@/store'
+import { commandCommentForDb, commandModuleForDb, looksSensitiveCommand } from '@/utils/commandSnippets'
 
 export default {
   name: 'SaveSnippetDialog',
@@ -64,11 +65,17 @@ export default {
       return VueCookie.get(TOKEN_KEY)
     },
     onSubmit() {
+      if (looksSensitiveCommand(this.content)) {
+        this.$message.error(this.$tc('message.command_sensitive'))
+        return
+      }
       const csrfToken = this.getCsrfToken()
+      const dbType = store.getters.profile?.dbType
       axios.post('/api/v1/ops/adhocs/', {
         name: this.form.name,
         args: this.content,
-        module: store.getters.profile?.dbType
+        module: commandModuleForDb(dbType),
+        comment: commandCommentForDb(dbType)
       }, {
         headers: {
           'X-CSRFToken': csrfToken
@@ -76,7 +83,8 @@ export default {
       }).then(response => {
         this.$message.success(this.$tc('message.save_success'))
       }).catch(error => {
-        this.$message.error(JSON.stringify((error.response.data)))
+        const data = error?.response?.data
+        this.$message.error(data ? JSON.stringify(data) : error.message)
       }).finally(() => {
         this.iVisible = false
       })
