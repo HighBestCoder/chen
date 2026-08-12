@@ -39,7 +39,8 @@ const message = {
     export_selected: '导出选中'
   },
   message: {
-    save_success: '保存成功'
+    save_success: '保存成功',
+    command_sensitive: '命令中疑似包含连接串、密码或 Token，请移除敏感信息后再保存'
   },
   msg: {
     copy_not_allowed: '不允许复制，请联系管理员开启！',
