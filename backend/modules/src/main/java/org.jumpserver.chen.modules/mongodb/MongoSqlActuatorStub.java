@@ -98,6 +98,7 @@ public class MongoSqlActuatorStub implements SQLActuator {
     @Override
     public SQLQueryResult executeWithAudit(SQLExecutePlan plan) throws SQLException {
         CommandRecord record = new CommandRecord(plan.getTargetSQL());
+        record.applyACL(plan.getAclResult());
         MongoCommand command = commandFromPlan(plan);
         try {
             SQLQueryResult result = execute(plan);

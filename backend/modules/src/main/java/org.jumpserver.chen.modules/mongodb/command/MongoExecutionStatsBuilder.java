@@ -90,6 +90,19 @@ public final class MongoExecutionStatsBuilder {
         return stats;
     }
 
+    public static ExecutionStats fromFailure(MongoConnectionManager cm, String rawCommand, Throwable error) {
+        ExecutionStats stats = baseStats(cm, null);
+        stats.setOpType("OTHER");
+        stats.setRawCommand(rawCommand);
+        stats.setSuccess(Boolean.FALSE);
+        if (error != null) {
+            String errorType = error.getClass().getSimpleName();
+            stats.setErrorMessage(error.getMessage() == null ? errorType : error.getMessage());
+            stats.setErrorCode(errorType);
+        }
+        return stats;
+    }
+
     private static ExecutionStats baseStats(MongoConnectionManager cm, MongoCommand command) {
         ExecutionStats stats = new ExecutionStats();
         stats.setEngineType("mongo");
