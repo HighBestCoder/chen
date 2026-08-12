@@ -11,12 +11,15 @@ const message = {
     run: 'Run',
     run_selected: 'Run selected',
     refresh: 'Refresh',
-    total: 'Total'
+    total: 'Total',
+    insert: 'Insert'
   },
   common: {
     num_row: '{num} rows',
     log: 'Log Output',
-    current: 'Current'
+    current: 'Current',
+    name: 'Name',
+    content: 'Content'
   },
   action: {
     confirm: 'Confirm',
@@ -25,7 +28,9 @@ const message = {
   tip: {
     run: 'Run (Ctrl + Enter)',
     stop: 'Stop (Ctrl + C)',
-    format: 'Format (Ctrl + L)'
+    format: 'Format (Ctrl + L)',
+    open: 'Open (Ctrl + R)',
+    save: 'Save (Ctrl + S)'
   },
   option: {
     export_all: 'Export all data',
@@ -35,6 +40,10 @@ const message = {
   msg: {
     copy_not_allowed: 'You are not allowed to copy, please contact the administrator to open it!',
     paste_not_allowed: 'You are not allowed to paste, please contact the administrator to open it!'
+  },
+  message: {
+    save_success: 'Saved successfully',
+    command_sensitive: 'The command appears to contain a connection string, password, or token. Remove sensitive data before saving.'
   }
 }
 
