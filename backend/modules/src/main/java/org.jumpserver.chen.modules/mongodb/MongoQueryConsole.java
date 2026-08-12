@@ -114,6 +114,7 @@ public class MongoQueryConsole extends AbstractConsole {
                 this.connectionManager.setDatabaseContext(db);
                 this.getState().setCurrentContext(db);
                 this.stateManager.commit();
+                this.recordContextSwitch(db);
             }
             default -> log.warn("Unsupported query console action {}", action.getAction());
         }
@@ -128,6 +129,10 @@ public class MongoQueryConsole extends AbstractConsole {
             this.getConsoleLogger().error("Command rejected by ACL");
             CommandRecord rejected = new CommandRecord(commandText);
             rejected.applyACL(aclResult);
+            rejected.setError("Command rejected by ACL");
+            rejected.setExecutionStats(
+                    MongoExecutionStatsBuilder.fromFailure(this.connectionManager, commandText,
+                            new MongoCommandException("Command rejected by ACL")));
             session.recordCommand(rejected);
             return;
         }
@@ -137,6 +142,9 @@ public class MongoQueryConsole extends AbstractConsole {
             CommandRecord rejected = new CommandRecord(commandText);
             rejected.applyACL(aclResult);
             rejected.setError("approved command hash mismatch");
+            rejected.setExecutionStats(
+                    MongoExecutionStatsBuilder.fromFailure(this.connectionManager, commandText,
+                            new MongoCommandException("approved command hash mismatch")));
             session.recordCommand(rejected);
             return;
         }
@@ -150,6 +158,8 @@ public class MongoQueryConsole extends AbstractConsole {
             CommandRecord parseFailed = new CommandRecord(commandText);
             parseFailed.applyACL(aclResult);
             parseFailed.setError(e.getMessage());
+            parseFailed.setExecutionStats(
+                    MongoExecutionStatsBuilder.fromFailure(this.connectionManager, commandText, e));
             session.recordCommand(parseFailed);
             return;
         }
@@ -167,6 +177,7 @@ public class MongoQueryConsole extends AbstractConsole {
             dataView.setLoadDataInterface((params, sink) -> {
                 var result = this.actuator.execute(command, params.getOffset(), params.getLimit());
                 this.getConsoleLogger().success(result);
+                record.setOutput(result);
                 record.setExecutionStats(
                         MongoExecutionStatsBuilder.fromSuccess(this.connectionManager, command, result));
                 return result;
@@ -187,6 +198,18 @@ public class MongoQueryConsole extends AbstractConsole {
         } finally {
             session.recordCommand(record);
         }
+    }
+
+    private void recordContextSwitch(String database) {
+        if (database == null || database.isEmpty()) {
+            return;
+        }
+        MongoCommand command = MongoCommand.useDb("use " + database, database);
+        CommandRecord record = new CommandRecord(command.getRawText());
+        record.setOutput("Current database changed to " + database);
+        record.setExecutionStats(
+                MongoExecutionStatsBuilder.fromSuccess(this.connectionManager, command, null));
+        SessionManager.getCurrentSession().recordCommand(record);
     }
 
     private void onDataViewAction(DataViewAction action) {
