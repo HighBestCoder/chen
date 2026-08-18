@@ -2,7 +2,6 @@ package org.jumpserver.chen.modules.mongodb.command;
 
 import org.jumpserver.chen.framework.audit.ExecutionStats;
 import org.jumpserver.chen.framework.audit.SizeCalculator;
-import org.jumpserver.chen.framework.audit.ColumnSizeKeyResolver;
 import org.jumpserver.chen.framework.datasource.entity.resource.Field;
 import org.jumpserver.chen.framework.datasource.sql.SQLQueryResult;
 import org.jumpserver.chen.modules.mongodb.MongoConnectionManager;
@@ -62,7 +61,7 @@ public final class MongoExecutionStatsBuilder {
         }
         try {
             List<String> keys = fields.stream()
-                    .map(ColumnSizeKeyResolver::keyForField)
+                    .map(MongoExecutionStatsBuilder::keyForMongoField)
                     .collect(Collectors.toList());
             Map<String, Long> byColumn = new LinkedHashMap<>();
             for (List<Object> row : data) {
@@ -77,6 +76,22 @@ public final class MongoExecutionStatsBuilder {
             stats.putExtra("size_by_column_source_status", SizeCalculator.STATUS_UNAVAILABLE);
             stats.putExtra("size_by_column_source_unavailable_reason", e.getClass().getSimpleName());
         }
+    }
+
+    private static String keyForMongoField(Field field) {
+        String table = field == null ? null : field.getTable();
+        if (table == null || table.trim().isEmpty()) {
+            table = "unknown";
+        } else {
+            table = table.trim().replaceAll("\\s+", "_");
+        }
+        String name = field == null ? null : field.getName();
+        if (name == null || name.trim().isEmpty()) {
+            name = "column";
+        } else {
+            name = name.trim().replaceAll("\\s+", "_");
+        }
+        return table + "." + name;
     }
 
     public static ExecutionStats fromFailure(MongoConnectionManager cm, MongoCommand command, Throwable error) {
