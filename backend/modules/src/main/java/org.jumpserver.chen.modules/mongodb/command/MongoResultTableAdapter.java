@@ -10,13 +10,11 @@ import org.jumpserver.chen.framework.datasource.sql.SQLQueryResult;
 import java.sql.Time;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
 public class MongoResultTableAdapter {
 
-    private static final String ID_FIELD = "_id";
     private static final JsonWriterSettings RELAXED =
             JsonWriterSettings.builder().outputMode(JsonMode.RELAXED).build();
 
@@ -31,15 +29,14 @@ public class MongoResultTableAdapter {
 
     public SQLQueryResult toResult(String sql, String collection, List<Document> documents, long startMillis,
                                    long queryDoneMillis, long total, boolean paged) {
+        return toResult(sql, collection, documents, null, startMillis, queryDoneMillis, total, paged);
+    }
+
+    public SQLQueryResult toResult(String sql, String collection, List<Document> documents, Document projection,
+                                   long startMillis, long queryDoneMillis, long total, boolean paged) {
         SQLQueryResult result = new SQLQueryResult(sql);
 
-        LinkedHashSet<String> keys = new LinkedHashSet<>();
-        for (Document doc : documents) {
-            keys.addAll(doc.keySet());
-        }
-        if (keys.isEmpty()) {
-            keys.add(ID_FIELD);
-        }
+        List<String> keys = MongoFieldPathExtractor.fieldPaths(projection, documents);
 
         List<Field> fields = new ArrayList<>();
         for (String key : keys) {
@@ -55,7 +52,7 @@ public class MongoResultTableAdapter {
         for (Document doc : documents) {
             List<Object> row = new ArrayList<>(keys.size());
             for (String key : keys) {
-                row.add(renderValue(doc.containsKey(key) ? doc.get(key) : null));
+                row.add(renderValue(MongoFieldPathExtractor.valueAtPath(doc, key)));
             }
             rows.add(row);
         }
@@ -75,7 +72,7 @@ public class MongoResultTableAdapter {
 
     private String inferType(List<Document> documents, String key) {
         for (Document doc : documents) {
-            Object value = doc.get(key);
+            Object value = MongoFieldPathExtractor.valueAtPath(doc, key);
             if (value != null) {
                 return typeName(value);
             }
@@ -86,6 +83,9 @@ public class MongoResultTableAdapter {
     private String typeName(Object value) {
         if (value instanceof ObjectId) {
             return "objectId";
+        }
+        if (value instanceof MongoFieldPathExtractor.FlattenedValues) {
+            return "array";
         }
         if (value instanceof Document) {
             return "object";
@@ -114,6 +114,9 @@ public class MongoResultTableAdapter {
         }
         if (value instanceof ObjectId oid) {
             return oid.toHexString();
+        }
+        if (value instanceof MongoFieldPathExtractor.FlattenedValues flattened) {
+            return flattened.toString();
         }
         if (value instanceof Document doc) {
             return doc.toJson(RELAXED);
