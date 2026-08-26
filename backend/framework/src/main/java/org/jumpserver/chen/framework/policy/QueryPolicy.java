@@ -30,7 +30,7 @@ import java.util.List;
 @Data
 public class QueryPolicy {
 
-    public static final int DEFAULT_MAX_ROWS = 10_000;
+    public static final int DEFAULT_MAX_ROWS = 50_000;
     public static final int DEFAULT_CONSOLE_LIMIT = 50;
     public static final int DEFAULT_PREVIEW_LIMIT = 100;
     public static final int DEFAULT_TIMEOUT_SECONDS = 30;
@@ -42,7 +42,7 @@ public class QueryPolicy {
      * per task-02 acceptance §6.3.
      */
     public static final List<Integer> DEFAULT_CONSOLE_LIMIT_OPTIONS =
-            Collections.unmodifiableList(Arrays.asList(50, 100, 500, 5000, 10000));
+            Collections.unmodifiableList(Arrays.asList(50, 100, 500, 5000, 50000));
 
     private int maxRows = DEFAULT_MAX_ROWS;
     private int defaultConsoleLimit = DEFAULT_CONSOLE_LIMIT;

@@ -22,13 +22,13 @@ import java.util.List;
  * <p>Example {@code application.yml}:</p>
  * <pre>
  * query:
- *   max-rows: 10000
+ *   max-rows: 50000
  *   default-console-limit: 50
  *   default-preview-limit: 100
  *   default-timeout-seconds: 30
  *   max-timeout-seconds: 300
  *   export-max-rows: 100000
- *   console-limit-options: [50, 100, 500, 5000, 10000]
+ *   console-limit-options: [50, 100, 500, 5000, 50000]
  * </pre>
  */
 @Configuration
