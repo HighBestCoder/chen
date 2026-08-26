@@ -32,12 +32,14 @@ public class TestQueryLimitBehavior {
     }
 
     private static void policyOptionsMatchContract() {
-        List<Integer> expected = List.of(50, 100, 500, 5000, 10000);
+        List<Integer> expected = List.of(50, 100, 500, 5000, 50000);
         report("policy options match contract",
                 QueryPolicy.DEFAULT_CONSOLE_LIMIT_OPTIONS.equals(expected),
                 expected, QueryPolicy.DEFAULT_CONSOLE_LIMIT_OPTIONS);
         report("default console limit is 50",
                 QueryPolicy.DEFAULT_CONSOLE_LIMIT == 50, 50, QueryPolicy.DEFAULT_CONSOLE_LIMIT);
+        report("default max rows is 50000",
+                QueryPolicy.DEFAULT_MAX_ROWS == 50000, 50000, QueryPolicy.DEFAULT_MAX_ROWS);
     }
 
     private static void detectsManualLimits() {
@@ -57,7 +59,7 @@ public class TestQueryLimitBehavior {
 
     private static void rewritesToolbarLimits() throws Exception {
         QueryPolicy policy = new QueryPolicy();
-        policy.setMaxRows(10000);
+        policy.setMaxRows(50000);
         policy.setDefaultConsoleLimit(50);
         QueryPolicyHolder.install(policy);
 
@@ -83,6 +85,17 @@ public class TestQueryLimitBehavior {
         report("sqlserver toolbar rewrites TOP 500",
                 sqlServer.getTargetSQL().toUpperCase().contains("TOP 500"),
                 "TOP 500", sqlServer.getTargetSQL());
+
+        SQLExecutePlan highLimit = plan("SELECT * FROM users", DbType.mysql, 50000, "toolbar");
+        report("mysql toolbar rewrites LIMIT 50000",
+                highLimit.getTargetSQL().toUpperCase().contains("LIMIT 50000"),
+                "LIMIT 50000", highLimit.getTargetSQL());
+        report("mysql toolbar audit queryLimit 50000", highLimit.getQueryLimit() == 50000, 50000, highLimit.getQueryLimit());
+
+        SQLExecutePlan clamped = plan("SELECT * FROM users", DbType.mysql, 50001, "toolbar");
+        report("mysql toolbar clamps above 50000",
+                clamped.getTargetSQL().toUpperCase().contains("LIMIT 50000"),
+                "LIMIT 50000", clamped.getTargetSQL());
 
         SQLExecutePlan manual = new SQLExecutePlan("SELECT * FROM users LIMIT 200", DbType.mysql);
         manual.setSqlActuator(new CountingActuator(DbType.mysql));

@@ -105,8 +105,8 @@ export default {
               value: 5000
             },
             {
-              label: this.$t('common.num_row', { num: 10000 }),
-              value: 10000
+              label: this.$t('common.num_row', { num: 50000 }),
+              value: 50000
             }
           ],
           onCommand: (command) => {
