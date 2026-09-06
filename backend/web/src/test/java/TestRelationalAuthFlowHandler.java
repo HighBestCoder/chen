@@ -126,11 +126,82 @@ public class TestRelationalAuthFlowHandler {
                 nullSpecDecision.decision()
         );
 
+        // ---- AuthFlowDispatcher routing ----
+
+        // No declared version + Core-injected Entra token: the flow is
+        // inferred from dbType. This is the path every SP asset actually
+        // takes, because auth_flow_version is an asset-only override that
+        // account-level Entra config cannot set.
+        checkRoute(spec(Map.of("auth_source", "core_poc_token")), "sqlserver", AuthFlowDispatcher.Route.V1);
+        checkRoute(spec(Map.of("auth_source", "core_poc_token")), "mssql", AuthFlowDispatcher.Route.V1);
+        checkRoute(spec(Map.of("auth_source", "core_poc_token")), "mongodb", AuthFlowDispatcher.Route.V2);
+        checkRoute(spec(Map.of("auth_source", "core_poc_token")), "SQLServer", AuthFlowDispatcher.Route.V1);
+
+        // An entra_* auth type is the other tell that Core swapped the
+        // secret for a bearer token.
+        checkRoute(spec(Map.of("auth_type", "entra_sp")), "sqlserver", AuthFlowDispatcher.Route.V1);
+        checkRoute(spec(Map.of("auth_type", "entra_mi")), "mongodb", AuthFlowDispatcher.Route.V2);
+
+        // PG / MySQL keep the legacy token-as-password wire behaviour.
+        checkRoute(spec(Map.of("auth_source", "core_poc_token")), "postgresql", AuthFlowDispatcher.Route.LEGACY);
+        checkRoute(spec(Map.of("auth_source", "core_poc_token")), "mysql", AuthFlowDispatcher.Route.LEGACY);
+
+        // Plain-password assets must never be re-routed.
+        checkRoute(spec(Map.of("auth_source", "direct_password")), "sqlserver", AuthFlowDispatcher.Route.LEGACY);
+        checkRoute(spec(Map.of("auth_type", "password")), "mongodb", AuthFlowDispatcher.Route.LEGACY);
+        checkRoute(spec(Map.of()), "sqlserver", AuthFlowDispatcher.Route.LEGACY);
+
+        // An explicit version is always honoured. "legacy" is a value the
+        // asset dropdown offers, and it used to fall through to UNKNOWN.
+        checkRoute(spec(Map.of("auth_flow_version", "legacy",
+                "auth_source", "core_poc_token")), "sqlserver", AuthFlowDispatcher.Route.LEGACY);
+        checkRoute(spec(Map.of("auth_flow_version", "v1")), "sqlserver", AuthFlowDispatcher.Route.V1);
+        checkRoute(spec(Map.of("auth_flow_version", "v2")), "mongodb", AuthFlowDispatcher.Route.V2);
+        checkRoute(spec(Map.of("auth_flow_version", "v9")), "sqlserver", AuthFlowDispatcher.Route.UNKNOWN);
+
+        // Missing dbType must not invent a route.
+        checkRoute(spec(Map.of("auth_source", "core_poc_token")), null, AuthFlowDispatcher.Route.LEGACY);
+
+        // ---- dispatcher + handler end to end ----
+        // These are the decisions the SQL Server AccessToken bridge and the
+        // Mongo OIDC bridge key off; anything else sends the JWT as a
+        // password.
+        checkEndToEnd(spec(Map.of("auth_source", "core_poc_token", "auth_type", "entra_sp")),
+                "sqlserver", Outcome.V1_ACCESS_TOKEN_REQUIRED);
+        checkEndToEnd(spec(Map.of("auth_source", "core_poc_token", "auth_type", "entra_sp")),
+                "mongodb", Outcome.V2_OIDC_TOKEN_REQUIRED);
+        checkEndToEnd(spec(Map.of("auth_source", "core_poc_token", "auth_type", "entra_sp")),
+                "postgresql", Outcome.LEGACY_TOKEN_AS_PASSWORD);
+        checkEndToEnd(spec(Map.of("auth_source", "direct_password")),
+                "sqlserver", Outcome.LEGACY_PASSWORD);
+
         if (failures > 0) {
             System.err.println("FAIL: " + failures + " case(s) failed");
             System.exit(1);
         }
         System.out.println("OK: all cases passed");
+    }
+
+    private static void checkRoute(ConnectionAuthSpec authSpec,
+                                   String dbType,
+                                   AuthFlowDispatcher.Route expected) {
+        var actual = AuthFlowDispatcher.resolve(authSpec, dbType);
+        boolean ok = actual == expected;
+        if (!ok) {
+            failures++;
+        }
+        System.out.printf("%-4s  expect=%-30s actual=%-30s  route dbType=%s flow='%s' source=%s%n",
+                ok ? "ok" : "FAIL", expected, actual, dbType,
+                authSpec.authFlowVersion(), authSpec.authSource());
+    }
+
+    private static void checkEndToEnd(ConnectionAuthSpec authSpec,
+                                      String dbType,
+                                      Outcome expected) {
+        var route = AuthFlowDispatcher.resolve(authSpec, dbType);
+        var decision = RelationalAuthFlowHandler.decide(authSpec, route, dbType);
+        report(String.format("end-to-end dbType=%s route=%s", dbType, route),
+                decision.decision() == expected, expected, decision.decision());
     }
 
     private static ConnectionAuthSpec spec(Map<String, String> settings) {

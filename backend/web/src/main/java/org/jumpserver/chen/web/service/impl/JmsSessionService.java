@@ -107,7 +107,7 @@ public class JmsSessionService implements SessionService {
 
         var platformSettings = tokenResp.getData().getPlatform().getProtocols(0).getSettingsMap();
         var authSpec = ConnectionAuthSpec.fromSettings(platformSettings);
-        var authFlowRoute = AuthFlowDispatcher.resolve(authSpec);
+        var authFlowRoute = AuthFlowDispatcher.resolve(authSpec, dbConnectInfo.getDbType());
         this.applyAuthFlow(dbConnectInfo, authSpec, authFlowRoute);
 
         if (platformSettings.containsKey("sysdba") && platformSettings.get("sysdba").equals("true")) {
@@ -161,6 +161,16 @@ public class JmsSessionService implements SessionService {
         );
         dbConnectInfo.getOptions().put("relationalAuthDecision", relationalDecision.decision().name());
         dbConnectInfo.getOptions().put("relationalAuthReason", relationalDecision.reason());
+
+        // One line per connection, enough to tell a mis-declared asset from
+        // platform settings that never reached chen (hasAuthContext=false).
+        log.info(
+                "Auth flow resolved: dbType={} hasAuthContext={} entraToken={} declaredFlow='{}' "
+                        + "route={} routeSource={} decision={}",
+                dbConnectInfo.getDbType(), authSpec.hasAuthContext(), authSpec.hasEntraToken(),
+                authSpec.authFlowVersion(), authFlowRoute.name().toLowerCase(Locale.ROOT),
+                AuthFlowDispatcher.routeSource(authSpec), relationalDecision.decision()
+        );
 
         switch (authFlowRoute) {
             case LEGACY -> this.handleLegacyAuthFlow(authSpec);
