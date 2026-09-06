@@ -38,6 +38,17 @@ public record ConnectionAuthSpec(
         return "core_poc_token".equals(authSource.toLowerCase(Locale.ROOT));
     }
 
+    /**
+     * True when Core replaced {@code account.secret} with an Entra bearer
+     * token before handing the connection to chen. Core stamps either
+     * {@code auth_source=core_poc_token} or an {@code entra_*} auth type
+     * ({@code entra_sp} / {@code entra_cert} / {@code entra_mi}); a
+     * plain-password asset carries neither, so it is never re-routed.
+     */
+    public boolean hasEntraToken() {
+        return isCorePocToken() || authType.toLowerCase(Locale.ROOT).startsWith("entra_");
+    }
+
     public String normalizedFlowVersion() {
         if (isLegacy()) {
             return "legacy";
