@@ -1,5 +1,7 @@
 package org.jumpserver.chen.modules.mongodb;
 
+import lombok.extern.slf4j.Slf4j;
+
 import com.mongodb.ConnectionString;
 import com.mongodb.MongoClientSettings;
 import com.mongodb.MongoCredential;
@@ -26,6 +28,7 @@ import java.util.List;
  * relational framework surfaces don't break, while the Mongo path uses
  * getClient()/getDatabase() instead.
  */
+@Slf4j
 public class MongoConnectionManager implements ConnectionManager {
 
     private final DBConnectInfo connectInfo;
@@ -97,6 +100,10 @@ public class MongoConnectionManager implements ConnectionManager {
             MongoCredential credential = MongoCredential.createOidcCredential(null)
                     .withMechanismProperty(MongoCredential.OIDC_CALLBACK_KEY, callback);
             builder.credential(credential);
+            // Length only, never the token body — mirrors the SQL Server
+            // bridge. Without this the Mongo Entra path is silent, and a
+            // failure cannot be told apart from the handshake never starting.
+            log.info("[MongoEntra] Connecting with Entra OIDC bearer token (length={})", token.length());
         }
 
         if (MongoSslContextFactory.sslEnabled(options)) {
