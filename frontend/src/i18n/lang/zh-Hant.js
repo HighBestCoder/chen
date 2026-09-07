@@ -16,6 +16,7 @@ const message = {
   },
   common: {
     num_row: '{num}行',
+    data_size: '數據量',
     log: '日誌輸出',
     current: '當前',
     name: '名稱',

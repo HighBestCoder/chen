@@ -4,6 +4,7 @@ import org.bson.Document;
 import org.bson.json.JsonMode;
 import org.bson.json.JsonWriterSettings;
 import org.bson.types.ObjectId;
+import org.jumpserver.chen.framework.audit.SizeCalculator;
 import org.jumpserver.chen.framework.datasource.entity.resource.Field;
 import org.jumpserver.chen.framework.datasource.sql.SQLQueryResult;
 
@@ -61,6 +62,15 @@ public class MongoResultTableAdapter {
         result.setHasResultSet(true);
         result.setTotal((int) Math.min(total, Integer.MAX_VALUE));
         result.setPaged(paged);
+
+        // The relational path accumulates this in its streaming fetch loop.
+        // Mongo materializes the documents first, so it is measured here —
+        // in one place, so the console display and the audit envelope can
+        // never disagree about the same query's size.
+        SizeCalculator.Result size = SizeCalculator.compute(fields, rows);
+        result.setStreamedSizeBytes(size.sizeBytes);
+        result.setSizeStatsStatus(size.status);
+        result.setSizeStatsUnavailableReason(size.unavailableReason);
 
         long fetchDone = System.currentTimeMillis();
         result.setStartTime(new Time(startMillis));

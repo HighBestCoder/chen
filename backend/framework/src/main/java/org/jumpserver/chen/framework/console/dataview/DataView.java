@@ -103,6 +103,7 @@ public class DataView extends SQLResult {
         this.data.getData().clear();
 
         this.getStateManager().getState().setTotal(result.getTotal());
+        this.getStateManager().getState().setSizeBytes(result.getStreamedSizeBytes());
 
 
         this.data.setFields(result.getFields());
