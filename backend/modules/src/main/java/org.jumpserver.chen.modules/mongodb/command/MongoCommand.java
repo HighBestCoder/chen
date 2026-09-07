@@ -3,14 +3,21 @@ package org.jumpserver.chen.modules.mongodb.command;
 import lombok.Getter;
 import org.bson.Document;
 
+import java.util.List;
+
 @Getter
 public class MongoCommand {
 
     public enum Type {
         FIND,
+        AGGREGATE,
         SHOW_DBS,
         SHOW_COLLECTIONS,
-        USE_DB
+        USE_DB,
+        INSERT,
+        UPDATE,
+        DELETE,
+        DROP_COLLECTION
     }
 
     private final Type type;
@@ -21,6 +28,10 @@ public class MongoCommand {
     private Document sort;
     private Integer limit;
     private String targetDatabase;
+    private List<Document> pipeline;
+    private List<Document> documents;
+    private Document update;
+    private boolean multi;
 
     private MongoCommand(Type type, String rawText) {
         this.type = type;
@@ -49,6 +60,46 @@ public class MongoCommand {
         c.projection = projection;
         c.sort = sort;
         c.limit = limit;
+        return c;
+    }
+
+    public static MongoCommand aggregate(String rawText, String collection,
+                                         List<Document> pipeline, Integer limit) {
+        MongoCommand c = new MongoCommand(Type.AGGREGATE, rawText);
+        c.collection = collection;
+        c.pipeline = pipeline == null ? List.of() : pipeline;
+        c.limit = limit;
+        return c;
+    }
+
+    public static MongoCommand insert(String rawText, String collection, List<Document> documents) {
+        MongoCommand c = new MongoCommand(Type.INSERT, rawText);
+        c.collection = collection;
+        c.documents = documents == null ? List.of() : documents;
+        return c;
+    }
+
+    public static MongoCommand update(String rawText, String collection, Document filter,
+                                      Document update, boolean multi) {
+        MongoCommand c = new MongoCommand(Type.UPDATE, rawText);
+        c.collection = collection;
+        c.filter = filter == null ? new Document() : filter;
+        c.update = update;
+        c.multi = multi;
+        return c;
+    }
+
+    public static MongoCommand delete(String rawText, String collection, Document filter, boolean multi) {
+        MongoCommand c = new MongoCommand(Type.DELETE, rawText);
+        c.collection = collection;
+        c.filter = filter == null ? new Document() : filter;
+        c.multi = multi;
+        return c;
+    }
+
+    public static MongoCommand dropCollection(String rawText, String collection) {
+        MongoCommand c = new MongoCommand(Type.DROP_COLLECTION, rawText);
+        c.collection = collection;
         return c;
     }
 }

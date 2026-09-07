@@ -18,7 +18,7 @@ public class TestMongoRiskControl {
         carriesAclMetadataForAudit();
         carriesRiskExtrasInAuditEnvelope();
         approvedCommandHashIsExact();
-        parserStillRejectsUnsupportedWrites();
+        aclIsTheOnlyGateOnHighRiskWrites();
 
         if (failures > 0) {
             System.err.println("FAIL: " + failures + " case(s) failed");
@@ -116,14 +116,31 @@ public class TestMongoRiskControl {
                 "different hash", ACLFilterImpl.commandHash(changed));
     }
 
-    private static void parserStillRejectsUnsupportedWrites() {
+    /**
+     * The parser no longer double-gates high-risk writes: once a reviewer
+     * approves `db.order.drop()`, it has to actually reach the driver. So the
+     * ACL is the single gate, and the parser's remaining refusal is limited to
+     * server-side JavaScript, which no approval unlocks.
+     */
+    private static void aclIsTheOnlyGateOnHighRiskWrites() {
+        var parser = new MongoCommandParser();
+
+        var drop = parser.parse("db.order.drop()");
+        report("approved drop is executable",
+                drop.getType() == org.jumpserver.chen.modules.mongodb.command.MongoCommand.Type.DROP_COLLECTION,
+                "DROP_COLLECTION", drop.getType());
+
+        var update = parser.parse("db.order.updateMany({status: \"new\"}, {$set: {status: \"done\"}})");
+        report("approved updateMany is executable",
+                update.getType() == org.jumpserver.chen.modules.mongodb.command.MongoCommand.Type.UPDATE,
+                "UPDATE", update.getType());
+
         try {
-            new MongoCommandParser().parse("db.order.drop()");
-            report("restricted parser rejects drop after ACL handling", false, "exception", "accepted");
+            parser.parse("db.order.find({$where: \"this.qty > 0\"})");
+            report("server-side JavaScript is still refused", false, "exception", "accepted");
         } catch (RuntimeException e) {
-            report("restricted parser rejects drop after ACL handling",
-                    e.getMessage().contains("Unsupported command"),
-                    "Unsupported command", e.getMessage());
+            report("server-side JavaScript is still refused",
+                    e.getMessage().contains("not allowed"), "not allowed", e.getMessage());
         }
     }
 

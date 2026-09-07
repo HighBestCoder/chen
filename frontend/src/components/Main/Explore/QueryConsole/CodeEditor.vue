@@ -90,7 +90,12 @@ const modeMap = {
   'mongodb': 'javascript'
 }
 
-const mongoKeywords = ['db', 'find', 'show dbs', 'show collections', 'use', 'limit', 'sort', 'ISODate']
+// Keep in sync with the "mongo" hint list in MongoSqlHintsHandlerStub.java
+const mongoKeywords = [
+  'db', 'find', 'aggregate',
+  'insertOne', 'insertMany', 'updateOne', 'updateMany', 'deleteOne', 'deleteMany', 'drop',
+  'show dbs', 'show collections', 'use', 'limit', 'sort', 'ISODate'
+]
 
 export default {
   name: 'CodeEditor',

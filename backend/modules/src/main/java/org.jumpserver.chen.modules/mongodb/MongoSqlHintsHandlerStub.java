@@ -35,7 +35,11 @@ public class MongoSqlHintsHandlerStub implements SQLHintsHandler {
                     .forEach(doc -> fields.addAll(doc.keySet()));
             hints.put(collection, new java.util.ArrayList<>(fields));
         }
-        hints.put("mongo", List.of("db", "find", "show dbs", "show collections", "use", "limit", "sort", "ISODate"));
+        // Keep in sync with mongoKeywords in
+        // frontend/src/components/Main/Explore/QueryConsole/CodeEditor.vue.
+        hints.put("mongo", List.of("db", "find", "aggregate", "insertOne", "insertMany",
+                "updateOne", "updateMany", "deleteOne", "deleteMany", "drop",
+                "show dbs", "show collections", "use", "limit", "sort", "ISODate"));
         return hints;
     }
 }

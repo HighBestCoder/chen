@@ -16,6 +16,7 @@ public class TestMongoAuditCoverage {
         successStatsCarryResultAndNamespace();
         failureStatsCarryRawCommandAndError();
         useCommandStatsCarryDatabaseSwitch();
+        writeStatsCarryAffectedRows();
         envelopeRoundTripPreservesAuditFields();
 
         if (failures > 0) {
@@ -66,6 +67,39 @@ public class TestMongoAuditCoverage {
         report("use op type", "USE".equals(stats.getOpType()), "USE", stats.getOpType());
         report("use raw command", "use t12audit".equals(stats.getRawCommand()), "use t12audit", stats.getRawCommand());
         report("use success", Boolean.TRUE.equals(stats.getSuccess()), true, stats.getSuccess());
+    }
+
+    private static void writeStatsCarryAffectedRows() {
+        MongoCommand command = MongoCommand.update(
+                "db.order.updateMany({status:\"new\"}, {$set:{status:\"done\"}})",
+                "order",
+                new Document("status", "new"),
+                new Document("$set", new Document("status", "done")),
+                true);
+        SQLQueryResult result = new SQLQueryResult(command.getRawText());
+        result.setHasResultSet(false);
+        result.setUpdateCount(7);
+
+        var stats = MongoExecutionStatsBuilder.fromSuccess(null, command, result);
+        report("write op type", "UPDATE".equals(stats.getOpType()), "UPDATE", stats.getOpType());
+        report("write affected rows", Long.valueOf(7).equals(stats.getAffectedRows()), 7L, stats.getAffectedRows());
+        report("write returned rows unset", stats.getReturnedRows() == null, null, stats.getReturnedRows());
+        report("write output text", "Query OK, 7 rows affected".equals(result.getOutput()),
+                "Query OK, 7 rows affected", result.getOutput());
+
+        MongoCommand drop = MongoCommand.dropCollection("db.order.drop()", "order");
+        SQLQueryResult dropResult = new SQLQueryResult(drop.getRawText());
+        dropResult.setHasResultSet(false);
+        dropResult.setUpdateCount(0);
+        var dropStats = MongoExecutionStatsBuilder.fromSuccess(null, drop, dropResult);
+        report("drop op type", "DROP".equals(dropStats.getOpType()), "DROP", dropStats.getOpType());
+        report("drop success", Boolean.TRUE.equals(dropStats.getSuccess()), true, dropStats.getSuccess());
+
+        MongoCommand aggregate = MongoCommand.aggregate(
+                "db.order.aggregate([{$group:{_id:\"$day\"}}])", "order",
+                List.of(new Document("$group", new Document("_id", "$day"))), null);
+        var aggStats = MongoExecutionStatsBuilder.fromSuccess(null, aggregate, null);
+        report("aggregate op type", "AGGREGATE".equals(aggStats.getOpType()), "AGGREGATE", aggStats.getOpType());
     }
 
     private static void envelopeRoundTripPreservesAuditFields() {

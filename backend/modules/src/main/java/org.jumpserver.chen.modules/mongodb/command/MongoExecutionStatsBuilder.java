@@ -51,6 +51,11 @@ public final class MongoExecutionStatsBuilder {
                 stats.putExtra("size_stats_unavailable_reason", size.unavailableReason);
             }
             applyColumnSizeStats(stats, result.getFields(), data);
+        } else {
+            // Writes and `use <db>` produce no result set; the affected-row
+            // count is the only volume figure they carry, and it is reported
+            // through the same field the relational builder uses.
+            stats.setAffectedRows((long) result.getUpdateCount());
         }
         return stats;
     }
@@ -142,8 +147,13 @@ public final class MongoExecutionStatsBuilder {
         }
         return switch (type) {
             case FIND -> "FIND";
+            case AGGREGATE -> "AGGREGATE";
             case SHOW_DBS, SHOW_COLLECTIONS -> "SHOW";
             case USE_DB -> "USE";
+            case INSERT -> "INSERT";
+            case UPDATE -> "UPDATE";
+            case DELETE -> "DELETE";
+            case DROP_COLLECTION -> "DROP";
         };
     }
 }

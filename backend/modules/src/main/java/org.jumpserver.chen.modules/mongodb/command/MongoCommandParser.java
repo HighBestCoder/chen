@@ -2,19 +2,36 @@ package org.jumpserver.chen.modules.mongodb.command;
 
 import org.bson.Document;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Parses a restricted MongoDB command DSL. This is a security boundary:
- * only read-only shapes are accepted (find / show dbs / show collections
- * / use). Arbitrary JavaScript, aggregation, and any write/admin command
- * are rejected so the console cannot be used to mutate data or run code.
+ * Parses a restricted MongoDB command DSL.
+ *
+ * <p>Read shapes (find / aggregate / show dbs / show collections / use) and
+ * data-modifying shapes (insertOne / insertMany / updateOne / updateMany /
+ * deleteOne / deleteMany / drop) are accepted. Writes reach the driver only
+ * after {@code MongoQueryConsole} has run the JMS ACL gate, which is the same
+ * approval path the relational console applies to arbitrary DML/DDL — the two
+ * engines are deliberately symmetric here.</p>
+ *
+ * <p>What stays rejected is <em>server-side JavaScript execution</em>:
+ * {@code $where}, {@code $function}, {@code $accumulator}, {@code mapReduce}
+ * and {@code eval}. That is a different boundary from data modification and is
+ * not relaxed.</p>
+ *
+ * <p>Note for operators: aggregation stages {@code $out} and {@code $merge}
+ * write to a collection. They parse as an AGGREGATE command, so a high-risk
+ * ACL rule that is meant to catch every write must cover them explicitly in
+ * addition to the {@code drop|update|delete|insert} verbs.</p>
  */
 public class MongoCommandParser {
 
-    private static final Pattern FIND = Pattern.compile(
-            "^db\\.([A-Za-z0-9_.$-]+)\\.find\\((.*)\\)$",
+    /** {@code db.<collection>.<op>(<args>)} — group 1 is greedy so the last {@code .op(} wins. */
+    private static final Pattern CALL = Pattern.compile(
+            "^db\\.([A-Za-z0-9_.$-]+)\\.([A-Za-z][A-Za-z0-9]*)\\s*\\((.*)\\)$",
             Pattern.DOTALL);
     private static final Pattern SORT_CLAUSE = Pattern.compile(
             "\\.sort\\((\\{.*?})\\)\\s*$", Pattern.DOTALL);
@@ -23,6 +40,10 @@ public class MongoCommandParser {
     private static final Pattern FORBIDDEN = Pattern.compile(
             "\\$where|\\$function|\\$accumulator|mapReduce|\\beval\\b",
             Pattern.CASE_INSENSITIVE);
+
+    private static final String ALLOWED =
+            "Allowed: find / aggregate / insertOne / insertMany / updateOne / updateMany"
+                    + " / deleteOne / deleteMany / drop / show dbs / show collections / use <db>";
 
     public MongoCommand parse(String input) {
         String text = input == null ? "" : input.trim();
@@ -51,17 +72,12 @@ public class MongoCommandParser {
             return MongoCommand.useDb(text, db);
         }
         if (lower.startsWith("db.")) {
-            try {
-                return parseFind(text);
-            } catch (MongoCommandException e) {
-                throw new MongoCommandException(
-                        "Unsupported command. Allowed: find / show dbs / show collections / use <db>");
-            }
+            return parseCall(text);
         }
-        throw new MongoCommandException("Unsupported command. Allowed: find / show dbs / show collections / use <db>");
+        throw new MongoCommandException("Unsupported command. " + ALLOWED);
     }
 
-    private MongoCommand parseFind(String text) {
+    private MongoCommand parseCall(String text) {
         String work = text;
         Integer limit = null;
         Document sort = null;
@@ -78,32 +94,107 @@ public class MongoCommandParser {
             work = work.substring(0, sortMatcher.start()).trim();
         }
 
-        Matcher findMatcher = FIND.matcher(work);
-        if (!findMatcher.matches()) {
-            throw new MongoCommandException("Only db.<collection>.find(...) is supported");
+        Matcher callMatcher = CALL.matcher(work);
+        if (!callMatcher.matches()) {
+            throw new MongoCommandException("Unsupported command. " + ALLOWED);
         }
-        String collection = findMatcher.group(1);
-        String args = findMatcher.group(2).trim();
+        String collection = callMatcher.group(1);
+        String op = callMatcher.group(2);
+        List<String> args = splitTopLevelArgs(callMatcher.group(3).trim());
 
-        Document filter = new Document();
-        Document projection = null;
-        if (!args.isEmpty()) {
-            int split = topLevelComma(args);
-            if (split < 0) {
-                filter = parseJson(args, "filter");
-            } else {
-                filter = parseJson(args.substring(0, split).trim(), "filter");
-                String projPart = args.substring(split + 1).trim();
-                if (!projPart.isEmpty()) {
-                    projection = parseJson(projPart, "projection");
-                }
-            }
-        }
+        return switch (op) {
+            case "find" -> buildFind(text, collection, args, sort, limit);
+            case "aggregate" -> buildAggregate(text, collection, args, limit);
+            case "insertOne" -> buildInsert(text, collection, args, false);
+            case "insertMany" -> buildInsert(text, collection, args, true);
+            case "updateOne" -> buildUpdate(text, collection, args, false);
+            case "updateMany" -> buildUpdate(text, collection, args, true);
+            case "deleteOne" -> buildDelete(text, collection, args, false);
+            case "deleteMany" -> buildDelete(text, collection, args, true);
+            case "drop" -> buildDrop(text, collection, args);
+            default -> throw new MongoCommandException(
+                    "Unsupported operation 'db." + collection + "." + op + "()'. " + ALLOWED);
+        };
+    }
+
+    private MongoCommand buildFind(String text, String collection, List<String> args,
+                                   Document sort, Integer limit) {
+        requireAtMost(args, 2, "find(filter, projection)");
+        Document filter = args.isEmpty() ? new Document() : parseJson(args.get(0), "filter");
+        Document projection = args.size() > 1 ? parseJson(args.get(1), "projection") : null;
         return MongoCommand.find(text, collection, filter, projection, sort, limit);
     }
 
-    private int topLevelComma(String args) {
+    private MongoCommand buildAggregate(String text, String collection, List<String> args, Integer limit) {
+        if (args.isEmpty()) {
+            throw new MongoCommandException("aggregate(pipeline) requires a pipeline array");
+        }
+        requireAtMost(args, 1, "aggregate(pipeline)");
+        return MongoCommand.aggregate(text, collection, parseDocumentArray(args.get(0), "pipeline"), limit);
+    }
+
+    private MongoCommand buildInsert(String text, String collection, List<String> args, boolean many) {
+        String shape = many ? "insertMany(documents)" : "insertOne(document)";
+        if (args.isEmpty()) {
+            throw new MongoCommandException(shape + " requires a document argument");
+        }
+        requireAtMost(args, 1, shape);
+        List<Document> documents = many
+                ? parseDocumentArray(args.get(0), "documents")
+                : List.of(parseJson(args.get(0), "document"));
+        if (documents.isEmpty()) {
+            throw new MongoCommandException(shape + " requires at least one document");
+        }
+        return MongoCommand.insert(text, collection, documents);
+    }
+
+    private MongoCommand buildUpdate(String text, String collection, List<String> args, boolean multi) {
+        String shape = (multi ? "updateMany" : "updateOne") + "(filter, update)";
+        if (args.size() < 2) {
+            throw new MongoCommandException(shape + " requires both a filter and an update document");
+        }
+        requireAtMost(args, 2, shape);
+        Document filter = parseJson(args.get(0), "filter");
+        Document update = parseJson(args.get(1), "update");
+        if (update.isEmpty()) {
+            throw new MongoCommandException(shape + " requires a non-empty update document");
+        }
+        return MongoCommand.update(text, collection, filter, update, multi);
+    }
+
+    private MongoCommand buildDelete(String text, String collection, List<String> args, boolean multi) {
+        String shape = (multi ? "deleteMany" : "deleteOne") + "(filter)";
+        if (args.isEmpty()) {
+            throw new MongoCommandException(shape + " requires a filter document");
+        }
+        requireAtMost(args, 1, shape);
+        return MongoCommand.delete(text, collection, parseJson(args.get(0), "filter"), multi);
+    }
+
+    private MongoCommand buildDrop(String text, String collection, List<String> args) {
+        if (!args.isEmpty()) {
+            throw new MongoCommandException("drop() does not take arguments");
+        }
+        return MongoCommand.dropCollection(text, collection);
+    }
+
+    private void requireAtMost(List<String> args, int max, String shape) {
+        if (args.size() > max) {
+            throw new MongoCommandException("Too many arguments for " + shape);
+        }
+    }
+
+    /**
+     * Splits a call's argument list on commas that sit outside any brace,
+     * bracket or quoted string. An empty argument string yields an empty list.
+     */
+    private List<String> splitTopLevelArgs(String args) {
+        List<String> parts = new ArrayList<>();
+        if (args.isEmpty()) {
+            return parts;
+        }
         int depth = 0;
+        int start = 0;
         boolean inString = false;
         char stringChar = 0;
         for (int i = 0; i < args.length(); i++) {
@@ -123,14 +214,17 @@ public class MongoCommandParser {
                 case '}', ']' -> depth--;
                 case ',' -> {
                     if (depth == 0) {
-                        return i;
+                        parts.add(args.substring(start, i).trim());
+                        start = i + 1;
                     }
                 }
                 default -> {
                 }
             }
         }
-        return -1;
+        parts.add(args.substring(start).trim());
+        parts.removeIf(String::isEmpty);
+        return parts;
     }
 
     private Document parseJson(String json, String what) {
@@ -139,5 +233,23 @@ public class MongoCommandParser {
         } catch (RuntimeException e) {
             throw new MongoCommandException("Invalid " + what + " document: " + e.getMessage());
         }
+    }
+
+    /**
+     * Parses a JSON array of documents by wrapping it in a throwaway object,
+     * so shell-mode extended JSON (e.g. {@code ISODate(...)}) keeps working.
+     */
+    private List<Document> parseDocumentArray(String json, String what) {
+        List<Document> list;
+        try {
+            Document wrapper = Document.parse("{\"__array__\": " + json + "}");
+            list = wrapper.getList("__array__", Document.class);
+        } catch (RuntimeException e) {
+            throw new MongoCommandException("Invalid " + what + " array: " + e.getMessage());
+        }
+        if (list == null) {
+            throw new MongoCommandException("Invalid " + what + " array: expected a JSON array");
+        }
+        return list;
     }
 }
