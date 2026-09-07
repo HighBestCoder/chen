@@ -78,7 +78,7 @@ export default {
             return this.state.paged
           },
           value: () => {
-            return '共 ' + this.$t('common.num_row', { num: this.state.total })
+            return '共 ' + this.$t('common.num_row', { num: this.state.total }) + this.dataSizeSuffix()
           }
         },
         pagination: {
@@ -118,6 +118,7 @@ export default {
               content += this.$t('common.num_row', { num: this.state.limit }) + ' | ' + content
             }
             content += this.$tc('button.total') + this.$t('common.num_row', { num: this.state.total })
+            content += this.dataSizeSuffix()
             return content
           }
         },
@@ -195,6 +196,24 @@ export default {
   methods: {
     getState() {
       return this.state
+    },
+    // Contract 1.2.4: the returned data volume has to be shown, not only
+    // written to the audit log. sizeBytes is -1 when the engine could not
+    // measure it, in which case nothing is appended.
+    dataSizeSuffix() {
+      const bytes = this.state.sizeBytes
+      if (bytes === undefined || bytes === null || bytes < 0) {
+        return ''
+      }
+      const units = ['B', 'KB', 'MB', 'GB']
+      let value = bytes
+      let unit = 0
+      while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024
+        unit++
+      }
+      const shown = unit === 0 ? value : value.toFixed(1)
+      return ' | ' + this.$tc('common.data_size') + ' ' + shown + ' ' + units[unit]
     },
     reloadTable() {
       const hotInstance = this.$refs.hostTable.hotInstance

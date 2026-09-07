@@ -42,14 +42,7 @@ public final class MongoExecutionStatsBuilder {
                     .map(f -> f.getName())
                     .filter(n -> n != null && !n.isEmpty())
                     .collect(Collectors.toList()));
-            SizeCalculator.Result size = SizeCalculator.compute(result.getFields(), data);
-            if (SizeCalculator.STATUS_OK.equals(size.status)) {
-                stats.setSizeBytes(size.sizeBytes);
-            }
-            stats.putExtra("size_stats_status", size.status);
-            if (size.unavailableReason != null) {
-                stats.putExtra("size_stats_unavailable_reason", size.unavailableReason);
-            }
+            applySizeStats(stats, result, data);
             applyColumnSizeStats(stats, result.getFields(), data);
         } else {
             // Writes and `use <db>` produce no result set; the affected-row
@@ -58,6 +51,31 @@ public final class MongoExecutionStatsBuilder {
             stats.setAffectedRows((long) result.getUpdateCount());
         }
         return stats;
+    }
+
+    /**
+     * Prefers the size the adapter already measured over the whole result, so
+     * the WebGUI display and this audit envelope report the same number.
+     * Falls back to computing it from the retained rows for results built
+     * without going through the adapter.
+     */
+    private static void applySizeStats(ExecutionStats stats, SQLQueryResult result, List<List<Object>> data) {
+        long measured = result.getStreamedSizeBytes();
+        String status = result.getSizeStatsStatus();
+        String unavailableReason = result.getSizeStatsUnavailableReason();
+        if (measured < 0) {
+            SizeCalculator.Result size = SizeCalculator.compute(result.getFields(), data);
+            measured = size.sizeBytes;
+            status = size.status;
+            unavailableReason = size.unavailableReason;
+        }
+        if (SizeCalculator.STATUS_OK.equals(status)) {
+            stats.setSizeBytes(measured);
+        }
+        stats.putExtra("size_stats_status", status);
+        if (unavailableReason != null) {
+            stats.putExtra("size_stats_unavailable_reason", unavailableReason);
+        }
     }
 
     private static void applyColumnSizeStats(ExecutionStats stats, List<Field> fields, List<List<Object>> data) {

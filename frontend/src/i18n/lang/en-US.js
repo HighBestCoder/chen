@@ -16,6 +16,7 @@ const message = {
   },
   common: {
     num_row: '{num} rows',
+    data_size: 'Data size',
     log: 'Log Output',
     current: 'Current',
     name: 'Name',

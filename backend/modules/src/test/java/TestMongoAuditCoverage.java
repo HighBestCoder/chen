@@ -17,6 +17,7 @@ public class TestMongoAuditCoverage {
         failureStatsCarryRawCommandAndError();
         useCommandStatsCarryDatabaseSwitch();
         writeStatsCarryAffectedRows();
+        displayedSizeMatchesAuditedSize();
         envelopeRoundTripPreservesAuditFields();
 
         if (failures > 0) {
@@ -100,6 +101,31 @@ public class TestMongoAuditCoverage {
                 List.of(new Document("$group", new Document("_id", "$day"))), null);
         var aggStats = MongoExecutionStatsBuilder.fromSuccess(null, aggregate, null);
         report("aggregate op type", "AGGREGATE".equals(aggStats.getOpType()), "AGGREGATE", aggStats.getOpType());
+    }
+
+    /**
+     * Contract 1.2.4 shows the data volume in the console while 1.2/1.5 write
+     * it to the audit log. Both read the same measurement, so this pins them
+     * to the same number.
+     */
+    private static void displayedSizeMatchesAuditedSize() {
+        MongoCommand command = MongoCommand.find(
+                "db.order.find({}, {name:1, city:1, _id:0})", "order",
+                new Document(), new Document("name", 1).append("city", 1).append("_id", 0), null, null);
+        SQLQueryResult result = new MongoResultTableAdapter().toResult(
+                command.getRawText(), "order",
+                List.of(new Document("name", "abcd").append("city", "efghij")),
+                command.getProjection(),
+                System.currentTimeMillis(), System.currentTimeMillis(), 1, false);
+
+        // "abcd" + "efghij" = 4 + 6 UTF-8 bytes.
+        report("adapter measures size on the result", result.getStreamedSizeBytes() == 10L,
+                10L, result.getStreamedSizeBytes());
+
+        var stats = MongoExecutionStatsBuilder.fromSuccess(null, command, result);
+        report("audited size equals displayed size",
+                Long.valueOf(result.getStreamedSizeBytes()).equals(stats.getSizeBytes()),
+                result.getStreamedSizeBytes(), stats.getSizeBytes());
     }
 
     private static void envelopeRoundTripPreservesAuditFields() {
