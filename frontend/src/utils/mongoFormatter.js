@@ -32,9 +32,12 @@ export function formatMongoCommand(command) {
     }
 
     if (char === '{' || char === '[') {
-      trimRight()
-      if (formatted.endsWith(':')) {
-        formatted += ' '
+      // 只有在紧跟 ':' 时才吃掉尾部空白（把 'a:' 补成 'a: {'）。
+      // 早先这里无条件 trimRight()，会把逗号换行后刚写好的缩进一起清掉，
+      // 于是 '},\n{' 里的 '{' 顶到行首，聚合流水线看起来没有缩进。
+      const trimmed = formatted.replace(/[ \t]+$/g, '')
+      if (trimmed.endsWith(':')) {
+        formatted = trimmed + ' '
       }
       formatted += char + '\n'
       indent++
