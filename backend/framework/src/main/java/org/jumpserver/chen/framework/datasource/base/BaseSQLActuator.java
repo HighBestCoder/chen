@@ -25,9 +25,13 @@ import org.jumpserver.chen.framework.utils.ReflectUtils;
 import java.math.BigInteger;
 import java.sql.*;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Slf4j
 public abstract class BaseSQLActuator implements SQLActuator {
@@ -245,6 +249,8 @@ public abstract class BaseSQLActuator implements SQLActuator {
                 var metadata = resultSet.getMetaData();
                 int columnCount = metadata.getColumnCount();
 
+                // 列名可能是别名(LABEL)，主键比对必须用真实列名(NAME)。
+                List<String> rawColumnNames = new ArrayList<>(columnCount);
                 for (int i = 1; i <= columnCount; i++) {
                     Field field = new Field();
                     field.setName(nonEmpty(metadataString(metadata, i, MetadataField.LABEL),
@@ -253,7 +259,9 @@ public abstract class BaseSQLActuator implements SQLActuator {
                     field.setSchema(metadataString(metadata, i, MetadataField.SCHEMA));
                     field.setType(metadataString(metadata, i, MetadataField.TYPE));
                     result.getFields().add(field);
+                    rawColumnNames.add(metadataString(metadata, i, MetadataField.NAME));
                 }
+                applyNullable(metadata, result.getFields());
 
                 ColumnSizeKeyResolver.ResolveResult columnKeys =
                         ColumnSizeKeyResolver.resolve(plan.getSourceSQL(), plan.getDruidDbType(), result.getFields());
@@ -318,6 +326,10 @@ public abstract class BaseSQLActuator implements SQLActuator {
                     }
                 }
                 resultSet.close();
+                // 主键查询必须等结果集关闭之后再做：MySQL 驱动是流式读取，
+                // 结果集还开着时同一连接上发任何语句都会抛
+                // "Streaming result set ... is still active"。
+                applyPrimaryKeys(statement, metadata, result.getFields(), rawColumnNames);
                 result.setFetchFinishedTime(new Time(System.currentTimeMillis()));
 
                 result.setTrueReturnedRows(rowCount);
@@ -360,7 +372,117 @@ public abstract class BaseSQLActuator implements SQLActuator {
     }
 
     private enum MetadataField {
-        LABEL, NAME, TABLE, SCHEMA, TYPE
+        LABEL, NAME, TABLE, SCHEMA, CATALOG, TYPE
+    }
+
+    /**
+     * 合同 §4.6.8 要求「结构预览中的字段约束与数据库实际一致」。
+     *
+     * <p>此前只从 {@link ResultSetMetaData} 取 LABEL/NAME/TABLE/SCHEMA/TYPE，
+     * 从不设 nullable 与主键，两个 boolean 一直是默认的 false —— 可空列被报成
+     * NOT NULL、主键列被报成非主键。（{@code BaseResourceBrowser.getFields(schema,
+     * table)} 会查 information_schema 拿 nullable，但没有任何调用者。）</p>
+     *
+     * <p>nullable 直接来自结果集元数据，零额外开销。主键必须查
+     * {@link DatabaseMetaData#getPrimaryKeys}，因此按「每个不同表只查一次」
+     * 执行，并且只在表数量不多时才查，避免宽联接把成本放大。整段 fail-open：
+     * 任何异常都只让约束信息回退为原来的默认值，绝不影响查询本身。</p>
+     */
+    private static final int PK_LOOKUP_MAX_TABLES = 4;
+
+    /** 从连接本身取 catalog / schema，取不到就返回空串。 */
+    private static String safeConnectionScope(Connection connection, boolean catalog) {
+        try {
+            String value = catalog ? connection.getCatalog() : connection.getSchema();
+            return value == null ? "" : value;
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    /** nullable 直接来自结果集元数据，零额外查询，建字段时即可填。 */
+    private static void applyNullable(ResultSetMetaData metadata, List<Field> fields) {
+        for (int i = 0; i < fields.size(); i++) {
+            try {
+                // columnNullableUnknown 时无法断言存在 NOT NULL 约束，按「可能为空」
+                // 处理；把未知说成有约束比说成没有更容易误导。
+                fields.get(i).setNullable(metadata.isNullable(i + 1) != ResultSetMetaData.columnNoNulls);
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    private static void applyPrimaryKeys(Statement statement, ResultSetMetaData metadata,
+                                         List<Field> fields, List<String> rawColumnNames) {
+        Set<String> tables = new LinkedHashSet<>();
+        for (Field field : fields) {
+            if (field.getTable() != null && !field.getTable().isEmpty()) {
+                tables.add(field.getTable());
+            }
+        }
+        if (tables.isEmpty() || tables.size() > PK_LOOKUP_MAX_TABLES) {
+            return;
+        }
+
+        try {
+            Connection connection = statement.getConnection();
+            if (connection == null) {
+                return;
+            }
+            DatabaseMetaData dbMetadata = connection.getMetaData();
+            if (dbMetadata == null) {
+                return;
+            }
+            Map<String, Set<String>> pkColumnsByTable = new HashMap<>();
+            for (String table : tables) {
+                int index = -1;
+                for (int i = 0; i < fields.size(); i++) {
+                    if (table.equals(fields.get(i).getTable())) {
+                        index = i;
+                        break;
+                    }
+                }
+                // MySQL 把库名放在 catalog，PostgreSQL / SQL Server 放在 schema。
+                // 结果集元数据里这两项常常是空的（实测 MySQL 8 驱动 catalog/schema
+                // 都返回空串），而 Connector/J 8 的 nullCatalogMeansCurrent 默认为
+                // false，null catalog 不会退回当前库，主键就查不到 —— 所以空的时候
+                // 从连接本身兜底。
+                String catalog = index < 0 ? "" : metadataString(metadata, index + 1, MetadataField.CATALOG);
+                String schema = index < 0 ? "" : fields.get(index).getSchema();
+                if (catalog == null || catalog.isEmpty()) {
+                    catalog = safeConnectionScope(connection, true);
+                }
+                if (schema == null || schema.isEmpty()) {
+                    schema = safeConnectionScope(connection, false);
+                }
+                Set<String> pkColumns = new HashSet<>();
+                try (var rs = dbMetadata.getPrimaryKeys(
+                        catalog.isEmpty() ? null : catalog,
+                        schema.isEmpty() ? null : schema,
+                        table)) {
+                    while (rs.next()) {
+                        pkColumns.add(rs.getString("COLUMN_NAME"));
+                    }
+                }
+                if (pkColumns.isEmpty()) {
+                    log.debug("No primary key resolved for table {} (catalog={} schema={})",
+                            table, catalog, schema);
+                }
+                pkColumnsByTable.put(table, pkColumns);
+            }
+            for (int i = 0; i < fields.size(); i++) {
+                Field field = fields.get(i);
+                Set<String> pkColumns = pkColumnsByTable.get(field.getTable());
+                String rawName = i < rawColumnNames.size() ? rawColumnNames.get(i) : null;
+                if (pkColumns != null && rawName != null && pkColumns.contains(rawName)) {
+                    field.setPrimaryKey(true);
+                }
+            }
+        } catch (Throwable e) {
+            // fail-open：约束信息拿不到不影响查询本身，但必须留痕，
+            // 否则「主键为什么没标出来」完全无从排查。
+            log.warn("Primary key lookup failed for tables {}: {}", tables, e.toString());
+        }
     }
 
     private static String metadataString(ResultSetMetaData metadata, int index, MetadataField field) {
@@ -370,6 +492,7 @@ public abstract class BaseSQLActuator implements SQLActuator {
                 case NAME -> metadata.getColumnName(index);
                 case TABLE -> metadata.getTableName(index);
                 case SCHEMA -> metadata.getSchemaName(index);
+                case CATALOG -> metadata.getCatalogName(index);
                 case TYPE -> metadata.getColumnTypeName(index);
             };
             return value == null ? "" : value;
