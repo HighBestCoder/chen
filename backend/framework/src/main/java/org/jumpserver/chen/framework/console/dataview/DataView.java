@@ -2,6 +2,7 @@ package org.jumpserver.chen.framework.console.dataview;
 
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import lombok.extern.slf4j.Slf4j;
 import org.jumpserver.chen.framework.console.action.DataViewAction;
 import org.jumpserver.chen.framework.console.component.Logger;
 import org.jumpserver.chen.framework.console.entity.response.SQLResult;
@@ -30,6 +31,7 @@ import java.util.Map;
 
 @EqualsAndHashCode(callSuper = true)
 @Data
+@Slf4j
 public class DataView extends SQLResult {
     private final String title;
     private final StateManager<DataViewState> stateManager;
@@ -173,6 +175,12 @@ public class DataView extends SQLResult {
         BufferedWriter writer = null;
         try {
             if (!SessionManager.getCurrentSession().canDownload()) {
+                // 这里曾是一个纯静默的 return：不写文件、不记日志、控制台也没有
+                // 任何提示，排查时完全看不出「导出为什么没反应」。授权里缺
+                // download 动作就会走到这条分支。
+                log.warn("Export denied: user={} from={} view={} scope={} — asset permission has no download action",
+                        session.getUsername(), session.getRemoteAddr(), this.title, scope);
+                this.consoleLogger.warn("Export denied: no download permission for this asset");
                 session.getController().sendFile(f.getName());
                 return;
             }
@@ -230,6 +238,8 @@ public class DataView extends SQLResult {
             }
             writer.flush();
 
+            log.info("Export finished: user={} view={} scope={} file={} — {}",
+                    session.getUsername(), this.title, scope, f.getName(), command.getOutput());
             this.consoleLogger.success(command.getOutput());
             session.recordCommand(command);
 

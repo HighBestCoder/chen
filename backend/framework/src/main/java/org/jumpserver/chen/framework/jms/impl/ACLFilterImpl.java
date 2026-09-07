@@ -64,6 +64,8 @@ public class ACLFilterImpl implements ACLFilter {
             }
             case Review -> {
                 result.setRiskAction("review");
+                log.info("Command review required: session={} aclId={} command={} — showing confirm dialog",
+                        this.session.getId(), acl.getId(), command);
                 var countDownLatch = new CountDownLatch(1);
                 AtomicReference<Exception> exception = new AtomicReference<>(null);
 
@@ -85,6 +87,8 @@ public class ACLFilterImpl implements ACLFilter {
                     }).start();
                 }));
                 dialog.addButton(new Button(MessageUtils.get("btn.label.cancel"), "cancel", () -> {
+                    log.info("Command review cancelled by operator: session={} command={}",
+                            this.session.getId(), command);
                     exception.set(new RuntimeException(MessageUtils.get("msg.error.user_cancel_command_review")));
                     countDownLatch.countDown();
                 }));
@@ -94,10 +98,14 @@ public class ACLFilterImpl implements ACLFilter {
                 try {
                     countDownLatch.await();
                     if (exception.get() != null) {
+                        log.warn("Command review NOT granted: session={} ticket={} reason={} — command will not run",
+                                this.session.getId(), result.getTicketId(), exception.get().getMessage());
                         result.setRiskLevel(Common.RiskLevel.ReviewReject);
                     } else {
                         result.setRiskLevel(Common.RiskLevel.ReviewAccept);
                         result.setApprovedCommandHash(commandHash(command));
+                        log.info("Command review granted: session={} ticket={} approvedHash={} — command may run",
+                                this.session.getId(), result.getTicketId(), result.getApprovedCommandHash());
                     }
                 } catch (InterruptedException e) {
                     throw new RuntimeException(e);
@@ -149,6 +157,8 @@ public class ACLFilterImpl implements ACLFilter {
             throw new RuntimeException("create command ticket failed: " + resp.getStatus().getErr());
         }
         result.setTicketId(extractTicketId(resp.getInfo().getTicketDetailUrl()));
+        log.info("Command review ticket created: session={} ticket={} affectedRowsEstimate={} url={}",
+                this.session.getId(), result.getTicketId(), affectRows, resp.getInfo().getTicketDetailUrl());
         this.waitForTicketStatusChange(command, resp.getInfo());
     }
 
@@ -208,6 +218,8 @@ public class ACLFilterImpl implements ACLFilter {
 
         try {
             var stub = this.serviceBlockingStub;
+            log.info("Waiting for ticket approval: session={} pollIntervalMs={} timeoutMs={}",
+                    this.session.getId(), WAIT_TICKET_INTERVAL, WAIT_TICKET_TIMEOUT);
 
             var token = SessionManager.getContextToken();
             timer.schedule(new TimerTask() {
@@ -216,6 +228,8 @@ public class ACLFilterImpl implements ACLFilter {
                     SessionManager.setContext(token);
 
                     if (System.currentTimeMillis() > endTime) {
+                        log.warn("Ticket approval timed out after {}ms: session={} command={}",
+                                WAIT_TICKET_TIMEOUT, ACLFilterImpl.this.session.getId(), cmd);
                         exception.set(new RuntimeException(MessageUtils.get("msg.error.command_review_timeout")));
                         timer.cancel();
                         cdl.countDown();
@@ -234,11 +248,18 @@ public class ACLFilterImpl implements ACLFilter {
 
                     switch (checkResponse.getData().getState()) {
                         case Approved -> {
+                            log.info("Ticket approved by {}: session={}",
+                                    checkResponse.getData().getProcessor(),
+                                    ACLFilterImpl.this.session.getId());
                             ticketClosed.set(true);
                             timer.cancel();
                             cdl.countDown();
                         }
                         case Rejected, Closed -> {
+                            log.warn("Ticket {} by {}: session={}",
+                                    checkResponse.getData().getState(),
+                                    checkResponse.getData().getProcessor(),
+                                    ACLFilterImpl.this.session.getId());
                             ticketClosed.set(true);
                             exception.set(new RuntimeException(MessageUtils.get("msg.error.command_review_reject", checkResponse.getData().getProcessor())));
                             timer.cancel();

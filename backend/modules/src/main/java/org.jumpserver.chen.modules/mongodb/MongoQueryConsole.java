@@ -123,9 +123,18 @@ public class MongoQueryConsole extends AbstractConsole {
     private void onCommand(String commandText) {
         var session = SessionManager.getCurrentSession();
         ACLResult aclResult = session.checkACL(commandText);
+        if (aclResult != null) {
+            // 高危命令排查的第一现场：命中了哪条规则、判成什么动作、
+            // 走审批时对应哪张工单。
+            log.info("Mongo ACL decision: user={} riskLevel={} action={} aclId={} groupId={} ticket={}",
+                    session.getUsername(), aclResult.getRiskLevel(), aclResult.getRiskAction(),
+                    aclResult.getCmdAclId(), aclResult.getCmdGroupId(), aclResult.getTicketId());
+        }
         if (aclResult != null
                 && (aclResult.getRiskLevel() == Common.RiskLevel.Reject
                 || aclResult.getRiskLevel() == Common.RiskLevel.ReviewReject)) {
+            log.warn("Mongo command rejected by ACL: user={} riskLevel={} aclId={} command={}",
+                    session.getUsername(), aclResult.getRiskLevel(), aclResult.getCmdAclId(), commandText);
             this.getConsoleLogger().error("Command rejected by ACL");
             CommandRecord rejected = new CommandRecord(commandText);
             rejected.applyACL(aclResult);
@@ -138,6 +147,9 @@ public class MongoQueryConsole extends AbstractConsole {
         }
         if (aclResult != null && aclResult.getApprovedCommandHash() != null
                 && !aclResult.getApprovedCommandHash().equals(ACLFilterImpl.commandHash(commandText))) {
+            log.warn("Mongo approved-command hash mismatch: user={} ticket={} approved={} actual={}",
+                    session.getUsername(), aclResult.getTicketId(), aclResult.getApprovedCommandHash(),
+                    ACLFilterImpl.commandHash(commandText));
             this.getConsoleLogger().error("Approved command hash mismatch");
             CommandRecord rejected = new CommandRecord(commandText);
             rejected.applyACL(aclResult);
@@ -153,6 +165,8 @@ public class MongoQueryConsole extends AbstractConsole {
         try {
             command = this.parser.parse(commandText);
         } catch (MongoCommandException e) {
+            log.info("Mongo command rejected by parser: user={} reason={} command={}",
+                    session.getUsername(), e.getMessage(), commandText);
             this.getConsoleLogger().error("parse error: %s", e.getMessage());
             this.getPacketIO().sendPacket("message", Message.error("Parse error", e.getMessage()));
             CommandRecord parseFailed = new CommandRecord(commandText);
@@ -176,6 +190,11 @@ public class MongoQueryConsole extends AbstractConsole {
             dataView.setSql(command.getRawText());
             dataView.setLoadDataInterface((params, sink) -> {
                 var result = this.actuator.execute(command, params.getOffset(), params.getLimit());
+                log.info("Mongo command executed: user={} opType={} db={} collection={} rows={} affected={}",
+                        session.getUsername(), command.getType(), this.connectionManager.getCurrentDatabaseName(),
+                        command.getCollection(),
+                        result.isHasResultSet() ? result.getData().size() : -1,
+                        result.isHasResultSet() ? -1 : result.getUpdateCount());
                 this.getConsoleLogger().success(result);
                 record.setOutput(result);
                 record.setExecutionStats(
@@ -190,6 +209,8 @@ public class MongoQueryConsole extends AbstractConsole {
                 this.sendDataView(dataView);
             }
         } catch (Exception e) {
+            log.warn("Mongo command execution failed: user={} opType={} command={} error={}",
+                    session.getUsername(), command.getType(), commandText, e.toString());
             this.getConsoleLogger().error("execute error: %s", e.getMessage());
             this.getPacketIO().sendPacket("message", Message.error("Execute error", e.getMessage()));
             record.setError(e.getMessage());
