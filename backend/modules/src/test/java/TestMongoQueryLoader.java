@@ -82,6 +82,39 @@ public class TestMongoQueryLoader {
             throw new AssertionError("export error swallowed");
         } catch (SQLException expected) { }
         require(audits.get(3).isError() && "other".equals(manager.getCurrentDatabaseName()), "failed export must audit and restore context");
+        reject[0] = false;
+        try {
+            loader.loadData(new SQLQueryParams(), new RowConsumer() {
+                public void begin(List<org.jumpserver.chen.framework.datasource.entity.resource.Field> fields) { }
+                public void accept(List<Object> row) { }
+                public void finish() throws SQLException { throw new SQLException("flush failed"); }
+            });
+            throw new AssertionError("finish error swallowed");
+        } catch (SQLException expected) { require(expected.getMessage().equals("flush failed"), "wrong flush error"); }
+        require(audits.get(audits.size()-1).isError(), "finish failure must be audited");
+        for (String write : List.of("db.c.aggregate([{$out:'x'}])", "db.c.aggregate([{$merge:'x'}])", "db.c.insertOne({x:1})")) {
+            manager.setDatabaseContext("original");
+            var writeLoader = new MongoQueryLoader(session, manager, actuator, new MongoCommandParser().parse(write), null, text);
+            writeLoader.loadData(new SQLQueryParams(), null);
+            int before = calls[0];
+            try { writeLoader.loadData(new SQLQueryParams(), null); throw new AssertionError("write replayed"); }
+            catch (MongoCommandException expected) { }
+            require(calls[0] == before, "refresh/export must not replay a write");
+        }
+        var capped = new MongoActuator(manager) {
+            @Override public SQLQueryResult execute(MongoCommand command, int offset, int limit) {
+                var result = new MongoResultTableAdapter().toResult(text,List.of(new Document("x",1)),1L,2L);
+                result.setTruncated(true); return result;
+            }
+        };
+        var cappedLoader = new MongoQueryLoader(session,manager,capped,new MongoCommandParser().parse(text),null,text);
+        try {
+            cappedLoader.loadData(new SQLQueryParams(),new RowConsumer() {
+                public void begin(List<org.jumpserver.chen.framework.datasource.entity.resource.Field> fields) { throw new AssertionError("partial export published"); }
+                public void accept(List<Object> row) { }
+            });
+            throw new AssertionError("truncated export accepted");
+        } catch (MongoCommandException expected) { }
         System.out.println("OK: export rows, per-load ACL/audit, original text and database isolation");
     }
 

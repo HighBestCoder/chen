@@ -48,12 +48,19 @@ public final class MongoQueryLoader implements LoadDataInterface {
             if (acl != null && !acl.allows(commandText)) {
                 throw new MongoCommandException("Command rejected by ACL");
             }
+            if (!initial && (command.writesCollection() || command.getType() == MongoCommand.Type.USE_DB)) {
+                throw new MongoCommandException("This command cannot be refreshed or exported again; execute it explicitly in the console");
+            }
             SQLQueryResult result = actuator.execute(command, params.getOffset(), params.getLimit());
             if (sink != null && result.isHasResultSet()) {
+                if (result.isTruncated()) {
+                    throw new MongoCommandException("Export exceeds the MongoDB row limit; narrow the query before exporting");
+                }
                 sink.begin(result.getFields());
                 for (var row : result.getData()) {
                     sink.accept(row);
                 }
+                sink.finish();
             }
             record.setOutput(result);
             record.setExecutionStats(MongoExecutionStatsBuilder.fromSuccess(manager, command, result));

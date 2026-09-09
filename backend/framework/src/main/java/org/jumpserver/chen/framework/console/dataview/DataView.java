@@ -334,7 +334,7 @@ public class DataView extends SQLResult {
         try {
             this.getStateManager().getState().setPage(1);
             this.loadData();
-        } catch (SQLException e) {
+        } catch (SQLException | RuntimeException e) {
             this.getStateManager().getState().setPage(p);
             throw e;
         }
@@ -345,7 +345,7 @@ public class DataView extends SQLResult {
         try {
             this.getStateManager().getState().setPage(this.getStateManager().getState().getPage() - 1);
             this.loadData();
-        } catch (SQLException e) {
+        } catch (SQLException | RuntimeException e) {
             this.getStateManager().getState().setPage(p);
             throw e;
         }
@@ -356,7 +356,7 @@ public class DataView extends SQLResult {
         try {
             this.getStateManager().getState().setPage(this.getStateManager().getState().getPage() + 1);
             this.loadData();
-        } catch (SQLException e) {
+        } catch (SQLException | RuntimeException e) {
             this.getStateManager().getState().setPage(p);
             throw e;
         }
@@ -372,7 +372,7 @@ public class DataView extends SQLResult {
                 this.getStateManager().getState().setPage(page);
             }
             this.loadData();
-        } catch (SQLException e) {
+        } catch (SQLException | RuntimeException e) {
             this.getStateManager().getState().setPage(p);
             throw e;
         }
@@ -385,7 +385,7 @@ public class DataView extends SQLResult {
             this.getStateManager().getState().setPage(1);
             this.getStateManager().getState().setLimit(limit);
             this.loadData();
-        } catch (SQLException e) {
+        } catch (SQLException | RuntimeException e) {
             this.getStateManager().getState().setLimit(oldLimit);
             this.getStateManager().getState().setPage(oldPage);
             throw e;

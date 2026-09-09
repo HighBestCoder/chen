@@ -21,7 +21,7 @@ public class TestMongoWriteExecution {
     private static final String DB = "t_a1_write_" + java.util.UUID.randomUUID().toString().replace("-", "");
     private static final String COLL = "order";
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         String host = System.getenv().getOrDefault("MONGO_HOST", "127.0.0.1");
         int port = Integer.parseInt(System.getenv().getOrDefault("MONGO_PORT", "27017"));
 
@@ -31,7 +31,11 @@ public class TestMongoWriteExecution {
         info.setPort(port);
         info.setDb(DB);
 
+        if (args.length > 0 && args[0].equals("--fixture")) {
+            info = TestConnectionTlsIntegration.info("mongodb");
+        }
         MongoConnectionManager cm = new MongoConnectionManager(info, null);
+        cm.setDatabaseContext(DB);
         MongoActuator actuator = new MongoActuator(cm);
         MongoCommandParser parser = new MongoCommandParser();
 

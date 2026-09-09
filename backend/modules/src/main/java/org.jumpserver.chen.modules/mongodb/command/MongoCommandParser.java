@@ -281,11 +281,22 @@ public class MongoCommandParser {
 
     private Document parseJson(String json, String what) {
         try {
-            Document document = Document.parse(json);
+            Document document = parseCompleteDocument(json);
             rejectExecutableOperators(document);
             return document;
         } catch (RuntimeException e) {
             throw new MongoCommandException("Invalid " + what + " document: " + e.getMessage());
+        }
+    }
+
+    private Document parseCompleteDocument(String json) {
+        try (var reader = new org.bson.json.JsonReader(json)) {
+            Document value = new org.bson.codecs.DocumentCodec().decode(reader,
+                    org.bson.codecs.DecoderContext.builder().build());
+            if (reader.readBsonType() != org.bson.BsonType.END_OF_DOCUMENT) {
+                throw new MongoCommandException("Unexpected text after BSON document");
+            }
+            return value;
         }
     }
 
@@ -311,13 +322,13 @@ public class MongoCommandParser {
     private List<Document> parseDocumentArray(String json, String what) {
         List<Document> list;
         try {
-            Document wrapper = Document.parse("{\"__array__\": " + json + "}");
+            Document wrapper = parseCompleteDocument("{\"__array__\": " + json + "}");
             rejectExecutableOperators(wrapper);
             list = wrapper.getList("__array__", Document.class);
         } catch (RuntimeException e) {
             throw new MongoCommandException("Invalid " + what + " array: " + e.getMessage());
         }
-        if (list == null) {
+        if (list == null || list.stream().anyMatch(java.util.Objects::isNull)) {
             throw new MongoCommandException("Invalid " + what + " array: expected a JSON array");
         }
         return list;
