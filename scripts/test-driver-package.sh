@@ -6,3 +6,6 @@ mvn -q -pl backend/web -am -DskipTests -Dmaven.antrun.skip=true package
 jar_path=backend/web/target/web-0.0.1.jar
 java -Dloader.main=TestDriverLoading -Dloader.path=backend/web/target/test-classes \
   -cp "$jar_path" org.springframework.boot.loader.launch.PropertiesLauncher --packaged
+# Exercise the production renewal wiring from the same executable artifact.
+java -Dloader.main=TestSessionRenewalRpc -Dloader.path=backend/web/target/test-classes \
+  -cp "$jar_path" org.springframework.boot.loader.launch.PropertiesLauncher
