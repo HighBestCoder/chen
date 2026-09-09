@@ -9,7 +9,6 @@ import org.jumpserver.chen.framework.datasource.entity.DBConnectInfo;
 import org.jumpserver.chen.framework.datasource.sql.SQLActuator;
 import org.jumpserver.chen.framework.driver.DriverClassLoader;
 import org.jumpserver.chen.framework.driver.DriverManager;
-import org.jumpserver.chen.framework.i18n.MessageUtils;
 import org.jumpserver.chen.framework.ssl.JKSGenerator;
 
 import java.lang.reflect.InvocationTargetException;
@@ -17,6 +16,10 @@ import java.sql.Connection;
 import java.sql.Driver;
 import java.sql.SQLException;
 import java.util.HashMap;
+import java.util.ArrayList;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -27,6 +30,8 @@ public abstract class BaseConnectionManager implements ConnectionManager {
     @Getter
     private final Datasource datasource;
     private final Map<String, DruidDataSource> dataSourceMap = new HashMap<>();
+    private boolean closed;
+    private final List<AutoCloseable> tlsResources = new ArrayList<>();
     private final ThreadLocal<String> currentDatabase = new ThreadLocal<>();
 
     protected SQLActuator sqlActuator;
@@ -36,7 +41,8 @@ public abstract class BaseConnectionManager implements ConnectionManager {
         this.connectInfo = connectInfo;
     }
 
-    public void ping(String jdbcUrl, Properties props) throws SQLException {
+    public synchronized void ping(String jdbcUrl, Properties props) throws SQLException {
+        ensureOpen();
         this.applyAuthProps(props);
         this.setSSLProps(props);
         this.applyAuditProps(props);
@@ -63,12 +69,26 @@ public abstract class BaseConnectionManager implements ConnectionManager {
         }
     }
 
+    protected synchronized JKSGenerator newJksGenerator() {
+        if (closed) throw new IllegalStateException("Connection manager is closed");
+        var generator = new JKSGenerator();
+        tlsResources.add(generator);
+        return generator;
+    }
+
+    protected synchronized Path createTlsTempFile(String prefix, String suffix) throws IOException {
+        if (closed) throw new IllegalStateException("Connection manager is closed");
+        Path path = Files.createTempFile(prefix, suffix);
+        tlsResources.add(() -> Files.deleteIfExists(path));
+        return path;
+    }
+
     protected void setSSLProps(Properties props) {
         if (this.getConnectInfo().getOptions().get("useSSL") != null
                 && (boolean) this.getConnectInfo().getOptions().get("useSSL")) {
             props.setProperty("useSSL", "true");
             props.setProperty("requireSSL", "true");
-            var jksGenerator = new JKSGenerator();
+            var jksGenerator = newJksGenerator();
             if ((boolean) this.getConnectInfo().getOptions().get("verifyServerCertificate")) {
                 props.setProperty("verifyServerCertificate", "true");
                 jksGenerator.setCaCert((String) this.getConnectInfo().getOptions().get("caCert"));
@@ -156,7 +176,7 @@ public abstract class BaseConnectionManager implements ConnectionManager {
     }
 
     @Override
-    public Connection getPhysicalConnection() throws SQLException {
+    public synchronized Connection getPhysicalConnection() throws SQLException {
         return this.getOrInitDataSource(this.getCurrentDatabaseName())
                 .createPhysicalConnection()
                 .getPhysicalConnection();
@@ -172,13 +192,33 @@ public abstract class BaseConnectionManager implements ConnectionManager {
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
+        if (closed) return;
+        closed = true;
+        RuntimeException failure = null;
         for (DruidDataSource dataSource : dataSourceMap.values()) {
-            dataSource.close();
+            try { dataSource.close(); }
+            catch (RuntimeException e) { if (failure == null) failure = e; else failure.addSuppressed(e); }
         }
+        dataSourceMap.clear();
+        for (AutoCloseable resource : tlsResources) {
+            try { resource.close(); }
+            catch (Exception e) {
+                if (failure == null) failure = new IllegalStateException("TLS resource cleanup failed", e);
+                else failure.addSuppressed(e);
+            }
+        }
+        tlsResources.clear();
+        currentDatabase.remove();
+        if (failure != null) throw failure;
     }
 
-    public DruidDataSource getOrInitDataSource(String database) throws SQLException {
+    private void ensureOpen() throws SQLException {
+        if (closed) throw new SQLException("Connection manager is closed");
+    }
+
+    public synchronized DruidDataSource getOrInitDataSource(String database) throws SQLException {
+        ensureOpen();
         if (StringUtils.isEmpty(database)) {
             database = this.connectInfo.getDb();
         }
@@ -187,34 +227,33 @@ public abstract class BaseConnectionManager implements ConnectionManager {
         }
         DruidDataSource ds = new DruidDataSource();
 
-        var properties = new Properties();
-        this.setSSLProps(properties);
-
-        this.connectInfo.getOptions().forEach((k, v) -> properties.setProperty(k, v.toString()));
-
-        this.applyAuditProps(properties);
-
-        ds.setConnectProperties(properties);
-
-        ds.setDriver(this.getDriver());
-        ds.setUrl(this.getJDBCUrl(database));
-        this.applyAuthOnDataSource(ds, properties);
-
-        ds.setKeepAlive(true);
-        ds.setFailFast(true);
-        ds.setKillWhenSocketReadTimeout(false);
-        ds.setTestWhileIdle(true);
-        ds.setSocketTimeout(1000 * 60 * 120);
-        ds.init();
-
         try {
+            var properties = new Properties();
+            this.setSSLProps(properties);
+
+            this.connectInfo.getOptions().forEach((k, v) -> properties.setProperty(k, v.toString()));
+
+            this.applyAuditProps(properties);
+
+            ds.setConnectProperties(properties);
+
+            ds.setDriver(this.getDriver());
+            ds.setUrl(this.getJDBCUrl(database));
+            this.applyAuthOnDataSource(ds, properties);
+
+            ds.setKeepAlive(true);
+            ds.setFailFast(true);
+            ds.setKillWhenSocketReadTimeout(false);
+            ds.setTestWhileIdle(true);
+            ds.setSocketTimeout(1000 * 60 * 120);
+            ds.init();
             ds.getConnection().close();
-        } catch (SQLException e) {
-            ds.close();
-            throw new SQLException(String.format("%s : %s", MessageUtils.get("msg.error.connect_error"), e.getMessage()));
+            this.dataSourceMap.put(database, ds);
+            return ds;
+        } catch (SQLException | RuntimeException e) {
+            try { ds.close(); } catch (RuntimeException cleanup) { e.addSuppressed(cleanup); }
+            throw e;
         }
-        this.dataSourceMap.put(database, ds);
-        return ds;
     }
 
     /**

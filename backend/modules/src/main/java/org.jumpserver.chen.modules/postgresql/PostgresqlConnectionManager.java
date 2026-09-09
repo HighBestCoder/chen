@@ -63,9 +63,8 @@ public class PostgresqlConnectionManager extends BaseConnectionManager {
 
     private Path writePemTempFile(String pem) {
         try {
-            Path path = Files.createTempFile("pg-ca-", ".crt");
+            Path path = createTlsTempFile("pg-ca-", ".crt");
             Files.write(path, pem.getBytes(StandardCharsets.UTF_8));
-            path.toFile().deleteOnExit();
             return path;
         } catch (IOException e) {
             throw new RuntimeException("Failed to write PostgreSQL CA cert: " + e.getMessage(), e);

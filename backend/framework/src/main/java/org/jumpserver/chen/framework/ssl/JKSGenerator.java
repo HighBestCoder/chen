@@ -21,7 +21,7 @@ import java.security.cert.CertificateFactory;
 import java.util.ArrayList;
 import java.util.List;
 
-public class JKSGenerator {
+public class JKSGenerator implements AutoCloseable {
 
     public final static String JSK_PASS = "jms@123..";
 
@@ -71,13 +71,19 @@ public class JKSGenerator {
     }
 
     public void destroy() {
+        if (this.workDir == null) return;
         try {
+            Files.deleteIfExists(this.workDir.resolve("client.jks"));
+            Files.deleteIfExists(this.workDir.resolve("ca.jks"));
             Files.deleteIfExists(this.workDir);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
     }
 
+
+    @Override
+    public void close() { destroy(); }
 
     public boolean fileExists(Path path) {
         return Files.exists(path);
@@ -108,7 +114,8 @@ public class JKSGenerator {
 
             caKeyStore.setCertificateEntry("ca", caCert);
             caKeyStore.store(fos, JSK_PASS.toCharArray());
-        } catch (IOException | NoSuchAlgorithmException | CertificateException | KeyStoreException e) {
+        } catch (IOException | NoSuchAlgorithmException | CertificateException | KeyStoreException | RuntimeException e) {
+            try { destroy(); } catch (RuntimeException cleanup) { e.addSuppressed(cleanup); }
             throw new RuntimeException(e);
         }
         this.caJksFilePath = caJKSFilePath;
@@ -130,11 +137,11 @@ public class JKSGenerator {
 
         Security.addProvider(new BouncyCastleProvider());
         var clientJKSFilePath = this.workDir.resolve("client.jks");
-        try (FileOutputStream fos = new FileOutputStream(clientJKSFilePath.toFile())) {
+        try (FileOutputStream fos = new FileOutputStream(clientJKSFilePath.toFile());
+             PEMParser pemParser = new PEMParser(new StringReader(this.clientKey))) {
             var clientCert = CertificateFactory.getInstance("X.509")
                     .generateCertificate(new ByteArrayInputStream(this.clientCert.getBytes()));
 
-            PEMParser pemParser = new PEMParser(new StringReader(this.clientKey));
             Object object = pemParser.readObject();
             JcaPEMKeyConverter converter = new JcaPEMKeyConverter().setProvider("BC");
 
@@ -157,7 +164,8 @@ public class JKSGenerator {
             clientKeyStore.setKeyEntry("client", privateKey, JSK_PASS.toCharArray(), certChain.toArray(new Certificate[0]));
 
             clientKeyStore.store(fos, JSK_PASS.toCharArray());
-        } catch (IOException | NoSuchAlgorithmException | CertificateException | KeyStoreException e) {
+        } catch (IOException | NoSuchAlgorithmException | CertificateException | KeyStoreException | RuntimeException e) {
+            try { destroy(); } catch (RuntimeException cleanup) { e.addSuppressed(cleanup); }
             throw new RuntimeException(e);
         }
         this.clientJksFilePath = clientJKSFilePath;
