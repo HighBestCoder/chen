@@ -144,10 +144,7 @@ public class SQLServerConnectionManager extends BaseConnectionManager {
         }
         String token = SqlServerAccessTokenSupport.resolveAccessToken(this.getConnectInfo());
         if (StringUtils.isBlank(token)) {
-            log.warn("[SqlServerEntra] AccessToken mode requested but token is blank; "
-                    + "falling back to legacy user/password auth");
-            super.applyAuthProps(props);
-            return;
+            throw new IllegalArgumentException("SQL Server Entra authentication requires a non-empty token");
         }
         // mssql-jdbc rejects (user, accessToken) and (password, accessToken)
         // combinations. Strip both before injecting the bearer token.
@@ -171,10 +168,7 @@ public class SQLServerConnectionManager extends BaseConnectionManager {
         }
         String token = SqlServerAccessTokenSupport.resolveAccessToken(this.getConnectInfo());
         if (StringUtils.isBlank(token)) {
-            log.warn("[SqlServerEntra] AccessToken mode requested for pool but token is blank; "
-                    + "falling back to legacy user/password auth");
-            super.applyAuthOnDataSource(ds, properties);
-            return;
+            throw new IllegalArgumentException("SQL Server Entra authentication requires a non-empty token");
         }
         // Do NOT call ds.setUsername / ds.setPassword: mssql-jdbc treats
         // any non-empty user as SQL Auth and rejects the AccessToken.
