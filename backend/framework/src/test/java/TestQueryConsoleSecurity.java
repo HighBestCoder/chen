@@ -76,7 +76,7 @@ public class TestQueryConsoleSecurity {
         });
         WebSocketSession ws=proxy(WebSocketSession.class,(p,m,v)->null);
         QueryConsole console=new QueryConsole(ds,ws,"test");
-        QueryConsoleState state=new QueryConsoleState("test");
+        QueryConsoleState state=new QueryConsoleState("test"); state.setCurrentContext(null);
         Field stateField=QueryConsole.class.getDeclaredField("stateManager"); stateField.setAccessible(true);
         stateField.set(console,new StateManager<>(state,new PacketIO(ws)));
         try {
@@ -111,6 +111,20 @@ public class TestQueryConsoleSecurity {
             if(calls[2]!=exec+1 || state.isCanCancel()) failures.add("allowed refresh failed or stale cancel state");
             if(!"renewed-approval".equals(records.get(records.size()-1).getTicketId())) failures.add("renewed approval not applied to execution audit");
             approval[0]=null;
+            state.setCurrentContext("different_database");
+            int contextExec=calls[2], contextCount=calls[1];
+            try { view.refresh(); failures.add("old result executed in changed context"); }
+            catch (SQLException expected) { require(expected.getMessage().contains("Switch back"), "context message"); }
+            if(calls[2]!=contextExec || calls[1]!=contextCount) failures.add("stale context queried database");
+            state.setCurrentContext(null);
+            view.refresh();
+            require(calls[2]==contextExec+1,"switching back did not restore refresh");
+            var limitPacket=new org.jumpserver.chen.framework.ws.io.Packet();
+            limitPacket.setType("data_view_action");limitPacket.setData(Map.of("action","change_limit","dataView",view.getTitle(),"data",500));
+            console.handle(limitPacket);
+            console.onSQL("SELECT 2");
+            var nextView=((Map<String,DataView>)viewsField.get(console)).values().iterator().next();
+            require(nextView.getState().getLimit()==500,"new query forgot selected console limit");
             int beforeBatch=calls[2],beforeCount=calls[1];
             console.onSQL("SELECT 1; DROP TABLE fixture");
             if(calls[2]!=beforeBatch || calls[1]!=beforeCount)failures.add("multi-statement ACL denial allowed earlier or later statement side effects");

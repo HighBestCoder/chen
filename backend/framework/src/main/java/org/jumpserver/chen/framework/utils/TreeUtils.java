@@ -14,16 +14,13 @@ public class TreeUtils {
     }
 
     private static String generateOneNodeKey(String type, String name) {
-        return String.format("%s%s%s", type, TYPE_SPLIT, name);
+        return String.format("%s%s%s", type, TYPE_SPLIT, name.replace("%", "%25").replace(",", "%2C").replace(":", "%3A"));
     }
 
 
     public static String getParentKey(String key) {
-        String[] keys = key.split(NODE_SPLIT);
-        if (keys.length == 1) {
-            return null;
-        }
-        return keys[keys.length - 2];
+        int end = key.lastIndexOf(NODE_SPLIT);
+        return end < 0 ? null : key.substring(0, end);
     }
 
     public static String getNodeType(String key) {
@@ -35,9 +32,9 @@ public class TreeUtils {
     public static String getValue(String key, String type) {
         String[] keys = key.split(NODE_SPLIT);
         for (int i = keys.length - 1; i >= 0; i--) {
-            String[] node = keys[i].split(TYPE_SPLIT);
+            String[] node = keys[i].split(TYPE_SPLIT, 2);
             if (node[0].equals(type)) {
-                return node[1];
+                return node.length == 1 ? "" : node[1].replace("%2C", ",").replace("%3A", ":").replace("%25", "%");
             }
         }
         return "";

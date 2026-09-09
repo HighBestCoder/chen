@@ -75,7 +75,7 @@ export default {
         total: {
           type: 'text',
           hidden: () => {
-            return this.state.paged
+            return !this.state.manualLimitDetected
           },
           value: () => {
             return '共 ' + this.$t('common.num_row', { num: this.state.total }) + this.dataSizeSuffix()
@@ -85,7 +85,7 @@ export default {
           type: 'dropdown',
           trigger: 'click',
           hidden: () => {
-            return !this.state.paged
+            return this.state.manualLimitDetected
           },
           options: [
             {
@@ -114,9 +114,8 @@ export default {
           },
           customDisplayContent: () => {
             let content = ''
-            if (this.isStatePaged) {
-              content += this.$t('common.num_row', { num: this.state.limit }) + ' | ' + content
-            }
+            content += this.$t('common.num_row', { num: this.state.limit }) + ' | '
+
             content += this.$tc('button.total') + this.$t('common.num_row', { num: this.state.total })
             content += this.dataSizeSuffix()
             return content

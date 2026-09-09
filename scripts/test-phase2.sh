@@ -7,6 +7,7 @@ mvn -q -pl backend/web -am -DskipTests -Dmaven.antrun.skip=true test-compile dep
   -Dmdep.outputFile=target/cp-phase2.txt -Dmdep.includeScope=test
 probe_cp="backend/web/target/test-classes:backend/web/target/classes:backend/modules/target/test-classes:backend/modules/target/classes:backend/framework/target/test-classes:backend/framework/target/classes:backend/wisp/target/classes:$(cat backend/web/target/cp-phase2.txt)"
 tests=(
+  TestSqlTextFidelity TestTreeKeyBoundaries TestSqlExecutionLifecycle TestRelationalMetadataBoundaries TestConsoleTitleIdentity
   TestACLRuleBoundaries TestACLReviewLifecycle TestApprovalEstimate TestSessionExecutionBoundary TestResourceQueryBoundary
   TestMongoCommandParser TestMongoQueryLoader TestMongoRiskControl TestMongoAuditCoverage
   TestMongoExecutionStatsBuilder TestMongoEntraAuthSupport TestMongoDocumentCompleteness TestMongoDocumentExport

@@ -13,6 +13,7 @@ public class DataViewState extends State {
     private int total;
     private boolean pinned;
     private boolean paged;
+    private boolean manualLimitDetected;
     /** Bytes of the returned data; -1 when the engine could not measure it. */
     private long sizeBytes = -1;
 

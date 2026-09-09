@@ -29,4 +29,7 @@ public interface RowConsumer {
      * Called once per data row, in fetch order.
      */
     void accept(List<Object> row) throws SQLException;
+
+    /** Flush buffered output before an actuator-owned transaction commits. */
+    default void finish() throws SQLException {}
 }

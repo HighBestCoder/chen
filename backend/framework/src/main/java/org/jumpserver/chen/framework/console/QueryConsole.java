@@ -42,6 +42,7 @@ public class QueryConsole extends AbstractConsole {
 
     private final Datasource datasource;
     private Connection conn;
+    private Integer selectedLimit;
     private volatile SQLExecutePlan currentPlan;
     private StateManager<QueryConsoleState> stateManager;
     private final Map<String, DataView> dataViews = new HashMap<>();
@@ -58,11 +59,9 @@ public class QueryConsole extends AbstractConsole {
                 .getCurrentSession()
                 .getConsoles();
 
-        for (var console : consoles.values()) {
-            if (console instanceof QueryConsole) {
-                ++num;
-            }
-        }
+        var usedTitles = new java.util.HashSet<String>();
+        consoles.values().forEach(console -> usedTitles.add(console.getTitle()));
+        while (usedTitles.contains(String.format(MessageUtils.get("title.query") + "-%d", num))) num++;
         return num;
     }
 
@@ -189,6 +188,9 @@ public class QueryConsole extends AbstractConsole {
             dataView.getStateManager().commit();
 
             dataView.doAction(action);
+            if (DataViewAction.ACTION_CHANGE_LIMIT.equals(action.getAction())) {
+                selectedLimit = org.jumpserver.chen.framework.policy.QueryPolicyHolder.current().clampLimit(dataView.getState().getLimit());
+            }
 
             this.getPacketIO().sendPacket("update_data_view", new UpdateDataView(action.getDataView(), dataView.getData()));
 
@@ -202,9 +204,10 @@ public class QueryConsole extends AbstractConsole {
 
     public void onCancel() {
         try {
-            if (this.currentPlan != null) {
-                this.currentPlan.cancel();
-                this.getConsoleLogger().error("cancel query: %s", this.currentPlan.getTargetSQL());
+            var plan = this.currentPlan;
+            if (plan != null) {
+                plan.cancel();
+                this.getConsoleLogger().error("cancel query: %s", plan.getTargetSQL());
             }
         } catch (SQLException e) {
             log.error("cancel failed ", e);
@@ -289,8 +292,8 @@ public class QueryConsole extends AbstractConsole {
                     this.sendDataView(dataView, clearOthers);
                     clearOthers = false;
                 }
+                this.ensureCurrentSchema();
             }
-            this.ensureCurrentSchema();
         } catch (ParserException e) {
             recordPreExecutionFailure(sql, aclResult, e);
             this.getConsoleLogger().error("%s: %s", MessageUtils.get("msg.error.parse_error"), e.getMessage());
@@ -357,14 +360,25 @@ public class QueryConsole extends AbstractConsole {
         plan.setAclResult(aclResult);
         DataView dataView = new DataView(plan.getSourceSQL(), this.getPacketIO(), this.getConsoleLogger());
         dataView.setSql(plan.getSourceSQL());
+        dataView.getState().setLimit(selectedLimit != null ? selectedLimit
+                : org.jumpserver.chen.framework.policy.QueryPolicyHolder.current().clampLimit(0));
 
         // The submitted batch was approved once by onSQL. Every later load
         // is a new execution and must be checked before generateTargetSQL counts rows.
+        String resultContext = this.getState().getCurrentContext();
         boolean[] firstLoad = {true};
         dataView.setLoadDataInterface((sqlQueryParams, sink) -> {
             boolean initial = firstLoad[0];
             firstLoad[0] = false;
             if (!initial) {
+                if (!plan.isReloadableResult()) {
+                    throw new SQLException("This result came from a write command. Run the command explicitly to execute it again; "
+                            + "export the current results instead of reloading all rows.");
+                }
+                if (!java.util.Objects.equals(resultContext, this.getState().getCurrentContext())) {
+                    throw new SQLException("Result belongs to context " + resultContext
+                            + ". Switch back to that context or run the query again.");
+                }
                 ACLResult fresh = null;
                 try {
                     fresh = SessionManager.getCurrentSession().checkACL(plan.getSourceSQL(), this.getConnection());
@@ -381,16 +395,15 @@ public class QueryConsole extends AbstractConsole {
 
             plan.setSqlQueryParams(sqlQueryParams);
             plan.setRowConsumer(sink);
-            plan.generateTargetSQL();
-
-            this.getConsoleLogger().info("execute sql: %s", plan.getTargetSQL());
-
+            plan.beginExecution();
             this.currentPlan = plan;
 
             this.getState().setCanCancel(true);
             this.stateManager.commit();
 
             try {
+                plan.generateTargetSQL();
+                this.getConsoleLogger().info("execute sql: %s", plan.getTargetSQL());
                 var result = plan.executeWithAudit();
                 this.getConsoleLogger().success(result);
                 return result;
@@ -437,7 +450,7 @@ public class QueryConsole extends AbstractConsole {
     public void close() {
         try {
             var plan = this.currentPlan;
-            if (plan != null && plan.getStatement() != null) plan.cancel();
+            if (plan != null) plan.cancel();
         } catch (SQLException e) {
             log.warn("Cancel on console close failed", e);
         } finally {

@@ -20,7 +20,7 @@ public class QueryConsoleState extends State {
         super(title);
         this.currentContext = "";
         this.inQuery = false;
-        this.timeout = 30;
+        this.timeout = org.jumpserver.chen.framework.policy.QueryPolicyHolder.current().resolveTimeoutSeconds(-1);
         this.editorLoading = false;
         this.canCancel = false;
     }
