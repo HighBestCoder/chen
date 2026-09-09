@@ -91,6 +91,8 @@ public class TestQueryConsoleSecurity {
             DataView view=((Map<String,DataView>)viewsField.get(console)).values().iterator().next();
             ACLResult reject=new ACLResult(); reject.setRiskLevel(Common.RiskLevel.Reject); approval[0]=reject;
             for(String action:List.of("refresh","next","all")) {
+                // Keep paging inside the result so the ACL path is actually reached.
+                view.getState().setPaged(true); view.getState().setTotal(1000); view.getState().setPage(1);
                 int count=calls[1], exec=calls[2], checks=calls[0];
                 try {
                     if(action.equals("refresh")) view.refresh();

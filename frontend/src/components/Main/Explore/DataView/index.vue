@@ -11,6 +11,7 @@
             ref="dataView"
             :data="data"
             :meta="viewMeta"
+            :initial-state="resultState"
             :message-subject="messageSubject"
             :state-subject="stateSubject"
             :tool-bar-items="toolBarItems"
@@ -64,6 +65,7 @@ export default {
         loading: false
       },
       viewMeta: null,
+      resultState: null,
       data: null,
       activeTab: 'log',
       logSubject: new Subject(),
@@ -89,7 +91,10 @@ export default {
   },
   beforeDestroy() {
     clearInterval(this.heartBeatInterval)
-    this.ws.close()
+    if (this.ws) {
+      this.ws.onopen = this.ws.onmessage = this.ws.onclose = this.ws.onerror = null
+      this.ws.close()
+    }
   },
   methods: {
     initWs() {
@@ -110,6 +115,14 @@ export default {
         }
         this.ws.send(JSON.stringify(connect))
       }
+      ws.onclose = () => {
+        clearInterval(this.heartBeatInterval)
+        this.tab.loading = false
+        this.state = { ...this.state, loading: false, inQuery: false, disconnected: true }
+        if (this.resultState) this.resultState = { ...this.resultState, loading: false, disconnected: true }
+        this.messageSubject.next({ title: 'Connection closed', message: 'Reconnect to continue.', type: 'error' })
+      }
+      ws.onerror = ws.onclose
       this.ws = ws
     },
     handleWSMessage(pkt) {
@@ -134,6 +147,7 @@ export default {
           this.messageSubject.next(pkt.data)
           break
         case 'update_state':
+          if ('limit' in pkt.data) this.resultState = pkt.data
           if (pkt.data.title === this.tab.title) {
             this.state = pkt.data
           } else {
@@ -148,13 +162,13 @@ export default {
       }
     },
     startHeartBeat() {
+      clearInterval(this.heartBeatInterval)
       this.heartBeatInterval = setInterval(() => {
-        this.ws.send(JSON.stringify({
-          type: 'ping'
-        }))
+        if (this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: 'ping' }))
       }, 1000 * 10)
     },
     onAction(action) {
+      if (this.state.disconnected) return
       this.ws.send(JSON.stringify({ type: 'data_view_action', data: action }))
     }
   }

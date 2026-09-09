@@ -1,10 +1,10 @@
 <template>
   <div :style="iStyle" class="toolbar">
     <span class="left">
-      <Items :items="defaultItems" :setting="iSettings" v-bind="$attrs"/>
+      <Items :items="defaultItems" :settings="iSettings" v-bind="$attrs"/>
     </span>
     <span class="right">
-      <Items :items="rightItems" :setting="iSettings" v-bind="$attrs"/>
+      <Items :items="rightItems" :settings="iSettings" v-bind="$attrs"/>
     </span>
   </div>
 </template>
@@ -52,10 +52,11 @@ export default {
   },
   data() {
     return {
-      defaultItems: {}
+
     }
   },
   computed: {
+    defaultItems() { return { ...this.items, ...this.leftItems } },
     iStyle() {
       const defaultStyle = {
         'text-align': 'left',
@@ -68,9 +69,6 @@ export default {
       const defaultSetting = {}
       return Object.assign(defaultSetting, this.settings)
     }
-  },
-  created() {
-    this.defaultItems = { ...this.items, ...this.leftItems }
   }
 }
 </script>

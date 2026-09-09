@@ -17,7 +17,7 @@ const messages = LANG_FILES.keys().reduce((messages, path) => {
 
 export const getLanguage = () => {
   const language = localStorage.getItem('chen_language')
-  return language
+  return LOADED_LANGUAGES.includes(language) ? language : 'en-US'
 }
 
 const i18n = new VueI18n({
@@ -30,7 +30,7 @@ const importLanguage = lang => {
 }
 
 const setLang = lang => {
-  localStorage.setItem('language', lang)
+  localStorage.setItem('chen_language', lang)
   i18n.locale = lang
 }
 

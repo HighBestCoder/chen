@@ -39,7 +39,7 @@
       <el-button @click="iVisible = false">
         {{ $tc('action.cancel') }}
       </el-button>
-      <el-button type="primary" @click="onSubmit">
+      <el-button type="primary" :loading="saving" @click="onSubmit">
         {{ $tc('action.confirm') }}
       </el-button>
     </span>
@@ -94,6 +94,7 @@ export default {
   },
   data() {
     return {
+      saving: false,
       form: {},
       formMeta: {},
       currentNode: {},
@@ -148,7 +149,9 @@ export default {
       cm.setSize('auto', '100px')
     },
     onSubmit() {
-      submitResourceForm({
+      if (this.saving) return
+      this.saving = true
+      return submitResourceForm({
         nodeKey: this.formMeta.nodeKey,
         resource: this.formMeta.resource,
         method: this.formMeta.method,
@@ -156,8 +159,11 @@ export default {
       }).then(data => {
         this.$bus.$emit(data.event, data.data)
         this.$message.success(this.$t('msg.ok'))
-      }).finally(() => {
         this.iVisible = false
+      }).catch(() => {
+        // The shared request interceptor reports the error; retain user input.
+      }).finally(() => {
+        this.saving = false
       })
     }
   }

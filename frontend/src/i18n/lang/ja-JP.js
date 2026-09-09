@@ -15,6 +15,7 @@ const message = {
     insert: '挿入'
   },
   common: {
+    total_unknown: '合計件数は不明',
     num_row: '{num}行',
     data_size: 'データ量',
     log: 'ログ出力',
@@ -28,7 +29,7 @@ const message = {
   },
   tip: {
     run: '実行 (Ctrl + Enter)',
-    stop: '停止 (Ctrl + C)',
+    stop: '停止 (Ctrl + Shift + C)',
     format: 'フォーマット (Ctrl + L)',
     open: '開く (Ctrl + R)',
     save: '保存 (Ctrl + S)'
@@ -43,6 +44,7 @@ const message = {
     paste_not_allowed: '貼り付けは許可されていません。管理者に連絡して開放してもらってください！'
   },
   message: {
+    command_required: 'コマンド名と内容を入力してください',
     save_success: '保存しました',
     command_sensitive: 'コマンドに接続文字列、パスワード、またはトークンが含まれている可能性があります。機密情報を削除してから保存してください。'
   }

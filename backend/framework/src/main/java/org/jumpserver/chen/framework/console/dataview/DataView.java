@@ -85,9 +85,16 @@ public class DataView extends SQLResult {
     }
 
     public void loadData() throws SQLException {
+        if (this.state.getLimit() <= 0 || this.state.getLimit() > 50_000 || this.state.getPage() < 1) {
+            throw new SQLException("Invalid display page or limit");
+        }
         SQLQueryParams queryParams = new SQLQueryParams();
         queryParams.setLimit(this.state.getLimit());
-        queryParams.setOffset((this.state.getPage() - 1) * this.state.getLimit());
+        try {
+            queryParams.setOffset(Math.multiplyExact(this.state.getPage() - 1, this.state.getLimit()));
+        } catch (ArithmeticException e) {
+            throw new SQLException("Page offset exceeds supported range", e);
+        }
 
         var result = this.loadDataInterface
                 .loadData(queryParams, null);
@@ -102,6 +109,8 @@ public class DataView extends SQLResult {
             return;
         }
 
+        this.hasTable = true;
+        this.data.setRevision(this.data.getRevision() + 1);
         this.state.setPaged(result.isPaged());
         this.state.setManualLimitDetected(result.isManualLimitDetected());
 
@@ -200,7 +209,7 @@ public class DataView extends SQLResult {
             }
 
             if (scope.equals("selected")) {
-                List<Map<String, Object>> selectedRows = exportRequest.rows();
+                List<Map<String, Object>> selectedRows = selectedRows(request, exportRequest.rows());
                 writeMappedRows(writer, this.data.getFields(), selectedRows);
                 command.setOutput(String.format("%d rows exported", selectedRows.size()));
             }
@@ -263,6 +272,36 @@ public class DataView extends SQLResult {
         this.consoleLogger.success(command.getOutput());
         session.recordCommand(command);
         session.getController().sendFile(f.getName());
+    }
+
+    private List<Map<String, Object>> selectedRows(Object request, List<Map<String, Object>> legacyRows)
+            throws SQLException {
+        if (request instanceof Map<?, ?> map && map.containsKey("rowIndices")) {
+            if (!(map.get("revision") instanceof Number revision) || revision.longValue() != this.data.getRevision()) {
+                throw new SQLException("Result changed; select the rows again before exporting");
+            }
+            if (!(map.get("rowIndices") instanceof List<?> indices)) throw new SQLException("Invalid row selection");
+            List<Map<String, Object>> selected = new ArrayList<>();
+            Set<Integer> seen = new HashSet<>();
+            for (Object value : indices) {
+                if (!(value instanceof Number number) || number.doubleValue() != number.intValue()
+                        || number.intValue() < 0 || number.intValue() >= this.data.getData().size()) {
+                    throw new SQLException("Selected row is outside the current result");
+                }
+                int index = number.intValue();
+                if (seen.add(index)) selected.add(this.data.getData().get(index));
+            }
+            return selected;
+        }
+        // Compatibility for old clients: never export client-invented values.
+        List<Map<String, Object>> available = new ArrayList<>(this.data.getData());
+        List<Map<String, Object>> selected = new ArrayList<>();
+        for (Map<String, Object> row : legacyRows) {
+            int index = available.indexOf(row);
+            if (index < 0) throw new SQLException("Selected data no longer matches the current result; select it again");
+            selected.add(available.remove(index));
+        }
+        return selected;
     }
 
     private static void writeMappedRows(BufferedWriter writer, List<Field> fields, List<Map<String, Object>> rows)
@@ -341,6 +380,7 @@ public class DataView extends SQLResult {
     }
 
     public void prevPage() throws SQLException {
+        if (!this.state.isPaged() || this.state.getPage() <= 1) return;
         var p = this.getStateManager().getState().getPage();
         try {
             this.getStateManager().getState().setPage(this.getStateManager().getState().getPage() - 1);
@@ -352,6 +392,8 @@ public class DataView extends SQLResult {
     }
 
     public void nextPage() throws SQLException {
+        if (!this.state.isPaged()) return;
+        if (this.state.getTotal() >= 0 && (long) this.state.getPage() * this.state.getLimit() >= this.state.getTotal()) return;
         var p = this.getStateManager().getState().getPage();
         try {
             this.getStateManager().getState().setPage(this.getStateManager().getState().getPage() + 1);
@@ -379,6 +421,7 @@ public class DataView extends SQLResult {
     }
 
     public void changeLimit(int limit) throws SQLException {
+        if (limit <= 0 || limit > 50_000) throw new SQLException("Display limit must be between 1 and 50000");
         var oldLimit = this.getStateManager().getState().getLimit();
         var oldPage = this.getStateManager().getState().getPage();
         try {

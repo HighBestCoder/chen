@@ -39,16 +39,22 @@ export default {
         isLeaf: 'leaf'
       },
       expandedNodes: [],
+      lastClickedKey: null,
       treeClickCount: 0,
       treeClickTimer: null
     }
   },
   mounted() {
-    this.$bus.$on('refresh_node', (data) => {
+    this.refreshHandler = (data) => {
       const node = this.getTreeNode(data)
       const resolve = this.elementCaching[data]
-      this.loadNode(node, resolve, true)
-    })
+      if (node) this.loadNode(node, resolve, true)
+    }
+    this.$bus.$on('refresh_node', this.refreshHandler)
+  },
+  beforeDestroy() {
+    this.$bus.$off('refresh_node', this.refreshHandler)
+    window.clearTimeout(this.treeClickTimer)
   },
   methods: {
     onContextmenu(event, data, node) {
@@ -93,7 +99,7 @@ export default {
       doAction(node.data, action).then(data => {
         switch (data.event) {
           case 'refresh_node':
-            this.loadNode(node, this.elementCaching[data.data])
+            this.loadNode(node, this.elementCaching[data.data], true)
             break
           case 'new_query':
             this.$bus.$emit('new_query', data.data)
@@ -110,6 +116,8 @@ export default {
       })
     },
     handleNodeClick(data) {
+      if (this.lastClickedKey !== data.key) this.treeClickCount = 0
+      this.lastClickedKey = data.key
       this.treeClickCount++
       window.clearTimeout(this.treeClickTimer)
       this.treeClickTimer = window.setTimeout(() => {
@@ -138,9 +146,11 @@ export default {
       if (!node.parent) {
         getResourceTreeChildren().then(data => {
           resolve(data)
-          this.expandedNodes.push(data[0].key)
-          this.$bus.$emit('new_query', data[0].key)
-        })
+          if (data.length) {
+            this.expandedNodes.push(data[0].key)
+            this.$bus.$emit('new_query', data[0].key)
+          }
+        }, () => { resolve([]) })
       } else {
         this.elementCaching[node.data.key] = resolve
         getResourceTreeChildren(node.data, force).then(data => {
@@ -167,7 +177,7 @@ export default {
           icon = 'jurassic_table'
           break
         case 'datasource':
-          icon = store.getters.profile?.dbType || 'database'
+          icon = ['mysql', 'postgresql', 'oracle'].includes(store.getters.profile?.dbType) ? store.getters.profile.dbType : 'database'
           break
         case 'field':
           icon = 'zidingyilie'
