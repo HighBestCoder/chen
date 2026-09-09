@@ -76,11 +76,10 @@ public class PostgresqlResourceBrowser extends BaseResourceBrowser {
         return this.getViews(SQL.bound(SQL_GET_VIEWS, schema));
     }
 
-    private static final String SQL_GET_FIELDS = "SELECT COLUMN_NAME AS NAME, COLUMN_TYPE AS TYPE, COLUMN_KEY AS `KEY`, IS_NULLABLE AS `NULLABLE`, COLUMN_DEFAULT AS `DEFAULT`, EXTRA AS EXTRA, COLUMN_COMMENT AS COMMENT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?";
 
     @Override
     public List<Field> getFields(String schema, String table) throws SQLException {
-        return this.getFields(SQL.bound(SQL_GET_FIELDS, schema, table));
+        return this.getColumnMetadata(schema, table);
     }
 
 

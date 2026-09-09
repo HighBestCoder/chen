@@ -67,7 +67,10 @@ public class MysqlActionHandler extends BaseActionHandler {
     private static final String SQL_SELECT_TABLE_DETAIL = "select TABLE_NAME,TABLE_SCHEMA,TABLE_TYPE,ENGINE,AVG_ROW_LENGTH,DATA_LENGTH,MAX_DATA_LENGTH,CREATE_TIME,TABLE_COLLATION from information_schema.TABLES WHERE TABLE_NAME = '?'";
 
     public EventEmitter onTableProperties(TreeNode node) throws SQLException {
-        return this.onShowObjectProperties("table", SQL_SELECT_TABLE_DETAIL, node);
+        return this.onShowObjectProperties("table", org.jumpserver.chen.framework.datasource.sql.SQL.bound(
+                SQL_SELECT_TABLE_DETAIL.replace("'?'", "?") + " AND table_schema = ?",
+                org.jumpserver.chen.framework.utils.TreeUtils.getValue(node.getKey(), "table"),
+                org.jumpserver.chen.framework.utils.TreeUtils.getValue(node.getKey(), "schema")), node);
     }
 
 

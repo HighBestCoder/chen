@@ -41,7 +41,9 @@ public class DataViewConsole extends AbstractConsole {
         this.table = StringUtils.isEmpty(TreeUtils.getValue(connect.getNodeKey(), "table")) ?
                 TreeUtils.getValue(connect.getNodeKey(), "view") : TreeUtils.getValue(connect.getNodeKey(), "table");
 
-        var title = "";
+        var title = String.format("DataView: %s%s.%s",
+                StringUtils.isEmpty(TreeUtils.getValue(this.getNodeKey(), "database")) ? ""
+                        : TreeUtils.getValue(this.getNodeKey(), "database") + ".", this.schema, this.table);
         try {
             title = this.generateConsoleName();
         } catch (RuntimeException e) {
@@ -57,8 +59,9 @@ public class DataViewConsole extends AbstractConsole {
 
 
     private String generateConsoleName() {
-        var name = String.format("DataView: %s.%s", this.schema, this.table);
-        if (SessionManager.getCurrentSession().getConsoles().get(name) != null) {
+        String database = TreeUtils.getValue(this.getNodeKey(), "database");
+        var name = String.format("DataView: %s%s.%s", StringUtils.isEmpty(database) ? "" : database + ".", this.schema, this.table);
+        if (SessionManager.getCurrentSession().getConsoles().values().stream().anyMatch(console -> name.equals(console.getTitle()))) {
             throw new RuntimeException("console already exists");
         }
 

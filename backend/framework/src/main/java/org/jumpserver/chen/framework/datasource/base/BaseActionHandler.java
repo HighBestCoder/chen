@@ -160,9 +160,12 @@ public abstract class BaseActionHandler implements ActionHandler {
     }
 
     public EventEmitter onShowObjectProperties(String type, String sql, TreeNode node) throws SQLException {
-        var sqlActuator = this.getDatasource().getConnectionManager().getSqlActuator();
         var objName = TreeUtils.getValue(node.getKey(), type);
-        var result = sqlActuator.execute(SQL.bound(sql.replace("'?'", "?"), objName));
+        return onShowObjectProperties(type, SQL.bound(sql.replace("'?'", "?"), objName), node);
+    }
+
+    public EventEmitter onShowObjectProperties(String type, SQL sql, TreeNode node) throws SQLException {
+        var result = this.getDatasource().getConnectionManager().getSqlActuator().execute(sql);
 
         var detailDialog = new DetailDialog(node.getKey(), type + MessageUtils.get("title.properties"));
         detailDialog.setWidth("50%");

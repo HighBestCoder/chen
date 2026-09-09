@@ -29,3 +29,11 @@ sandbox.module.exports.watch.data.call(context)
 assert.deepStrictEqual(Array.from(context.hotSettings.colHeaders), ['newPageField'])
 assert.strictEqual(read(context.hotSettings.columns[0], { newPageField: 'new value' }), 'new value')
 console.log('OK: dotted literal keys, JSON cells and int64 text remain intact')
+
+const toolbarContext = { $t: key => key, $tc: key => key, state: { paged: false, manualLimitDetected: false } }
+const toolbar = sandbox.module.exports.data.call(toolbarContext).defaultToolBarItems
+assert.strictEqual(toolbar.pagination.hidden(), false, 'unknown total must not hide row limit selector')
+assert.strictEqual(toolbar.next.hidden(), true, 'unknown total must not offer false last/next pages')
+toolbarContext.state.manualLimitDetected = true
+assert.strictEqual(toolbar.pagination.hidden(), true, 'manual SQL limit takes priority')
+console.log('OK: query limit remains selectable without an automatic count; manual limit takes precedence')

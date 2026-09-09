@@ -22,7 +22,7 @@ public class PostgresqlSQLHintsHandler extends BaseSQLHintsHandler {
     }
 
 
-    private static final String SQL_GET_ALL_TABLES = "SELECT TABLE_NAME AS NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ?";
+    private static final String SQL_GET_ALL_TABLES = "SELECT TABLE_NAME AS NAME, TABLE_SCHEMA FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ?";
 
     public List<Table> getALlTables(String schema) throws SQLException {
         return this.connectionManager.getSqlActuator()

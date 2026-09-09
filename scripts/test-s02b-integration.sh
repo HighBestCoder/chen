@@ -78,11 +78,11 @@ wait_ready pg docker exec "$run_id-pg" pg_isready -U fixture
 wait_ready mysql docker exec "$run_id-mysql" mysql -uroot '-pFixturePass9!' -e 'SELECT 1'
 wait_ready mongo docker exec "$run_id-mongo" mongosh --quiet --tls --tlsAllowInvalidCertificates -u fixture -p 'Fixture + /?@Pass9' --eval 'db.runCommand({ping:1})'
 wait_ready sql docker exec "$run_id-sql" /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'FixturePass9!' -Q 'SELECT 1'
-docker run --rm --network "$network" -v "$source_dir:/w" -v "$fixture_dir:/fixtures" -v "$maven_cache:/root/.m2" -w /w \
+docker run --rm --network "$network" -e CHEN_INTEGRATION_MAIN="${CHEN_INTEGRATION_MAIN:-TestConnectionTlsIntegration}" -v "$source_dir:/w" -v "$fixture_dir:/fixtures" -v "$maven_cache:/root/.m2" -w /w \
   maven:3.9.9-eclipse-temurin-17 bash -c '
     set -euo pipefail
     keytool -importcert -noprompt -alias fixture -file /fixtures/ca.crt -keystore /fixtures/trust.jks -storepass fixturepass >/dev/null 2>&1
     mvn -q -pl backend/web -am -DskipTests -Dmaven.antrun.skip=true test-compile dependency:build-classpath -Dmdep.outputFile=target/cp-phase2.txt -Dmdep.includeScope=test
     probe_cp="backend/web/target/test-classes:backend/web/target/classes:backend/modules/target/test-classes:backend/modules/target/classes:backend/framework/target/classes:backend/wisp/target/classes:$(cat backend/web/target/cp-phase2.txt)"
-    timeout 240 java -Dlogback.configurationFile=/fixtures/logback.xml -Djavax.net.ssl.trustStore=/fixtures/trust.jks -Djavax.net.ssl.trustStorePassword=fixturepass -cp "$probe_cp" TestConnectionTlsIntegration
+    timeout 240 java -Dlogback.configurationFile=/fixtures/logback.xml -Djavax.net.ssl.trustStore=/fixtures/trust.jks -Djavax.net.ssl.trustStorePassword=fixturepass -cp "$probe_cp" "$CHEN_INTEGRATION_MAIN"
   '

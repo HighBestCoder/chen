@@ -31,7 +31,7 @@ public class Message extends SQLResult {
         Message msg = new Message();
         msg.setType(type);
         msg.setTitle(title);
-        msg.setMessage(String.format(message, args));
+        msg.setMessage((args.length == 0 ? message : String.format(message, args)));
         return msg;
     }
 }

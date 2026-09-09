@@ -22,7 +22,7 @@ public class Logger {
     }
 
     public void consoleLog(int level, String message, Object... args) {
-        var msg = String.format(message, args);
+        var msg = (args.length == 0 ? message : String.format(message, args));
         var logMsg = new Log(level, msg);
         this.packetIO.sendPacket(Packet.TYPE_LOG, logMsg);
     }

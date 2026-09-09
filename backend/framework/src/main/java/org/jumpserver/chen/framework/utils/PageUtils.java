@@ -41,6 +41,10 @@ public class PageUtils {
     }
 
     public static String limit(String sql, DbType dbType, int offset, int count) {
+        return SqlText.rewrite(sql, dbType, text -> limitUnquoted(text, dbType, offset, count));
+    }
+
+    private static String limitUnquoted(String sql, DbType dbType, int offset, int count) {
         List<SQLStatement> stmtList = SQLUtils.parseStatements(sql, dbType);
         if (stmtList.size() != 1) {
             throw new IllegalArgumentException("sql not support count : " + sql);
@@ -73,6 +77,18 @@ public class PageUtils {
 
     public static String limit(SQLSelect select, DbType dbType, int offset, int count) {
         limit(select, dbType, offset, count, false);
+        if (dbType == DbType.sqlserver || dbType == DbType.jtds) {
+            var output = new StringBuilder();
+            select.accept(new com.alibaba.druid.sql.dialect.sqlserver.visitor.SQLServerOutputVisitor(output) {
+                @Override public boolean visit(SQLLimit value) {
+                    print0("OFFSET ");
+                    if (value.getOffset() == null) print0("0"); else value.getOffset().accept(this);
+                    print0(" ROWS FETCH NEXT "); value.getRowCount().accept(this); print0(" ROWS ONLY");
+                    return false;
+                }
+            });
+            return output.toString();
+        }
         return SQLUtils.toSQLString(select, dbType);
     }
 
@@ -254,85 +270,33 @@ public class PageUtils {
 
     private static boolean limitSQLServer(SQLSelect select, DbType dbType, int offset, int count, boolean check) {
         SQLSelectQuery query = select.getQuery();
-        SQLBinaryOpExpr gt = new SQLBinaryOpExpr(new SQLIdentifierExpr("ROWNUM"), SQLBinaryOperator.GreaterThan, new SQLNumberExpr(offset), DbType.sqlserver);
-        SQLBinaryOpExpr lteq = new SQLBinaryOpExpr(new SQLIdentifierExpr("ROWNUM"), SQLBinaryOperator.LessThanOrEqual, new SQLNumberExpr(count + offset), DbType.sqlserver);
-        SQLBinaryOpExpr pageCondition = new SQLBinaryOpExpr(gt, SQLBinaryOperator.BooleanAnd, lteq, DbType.sqlserver);
-        SQLServerSelectQueryBlock queryBlock;
-        SQLAggregateExpr aggregateExpr;
-        SQLOrderBy orderBy;
-        SQLServerSelectQueryBlock countQueryBlock;
-        if (query instanceof SQLSelectQueryBlock) {
-            queryBlock = (SQLServerSelectQueryBlock) query;
-            if (offset <= 0) {
-                SQLServerTop top = queryBlock.getTop();
-                if (check && top != null && !top.isPercent() && top.getExpr() instanceof SQLNumericLiteralExpr) {
-                    int rowCount = ((SQLNumericLiteralExpr) top.getExpr()).getNumber().intValue();
-                    if (rowCount <= count) {
-                        return false;
-                    }
-                }
-                queryBlock.setTop(new SQLServerTop(new SQLNumberExpr(count)));
-                return true;
-            } else {
-                // 创建 SELECT NULL 的子查询
-                SQLSelectQueryBlock selectQueryBlock = new SQLSelectQueryBlock();
-                selectQueryBlock.addSelectItem(new SQLSelectItem(new SQLNullExpr()));
-
-                SQLSelect selectNull = new SQLSelect();
-                selectNull.setQuery(selectQueryBlock);
-
-                SQLQueryExpr selectNullExpr = new SQLQueryExpr(selectNull);
-
-                // 使用 SELECT NULL 的子查询作为 ORDER BY 的一部分
-                SQLSelectOrderByItem orderByItem = new SQLSelectOrderByItem(selectNullExpr);
-                SQLOrderBy orderByNull = new SQLOrderBy();
-                orderByNull.addItem(orderByItem);
-
-                aggregateExpr = new SQLAggregateExpr("ROW_NUMBER");
-                aggregateExpr.setOver(new SQLOver(orderByNull));
-
-                queryBlock.getSelectList().add(new SQLSelectItem(aggregateExpr, "ROWNUM"));
-
-                countQueryBlock = new SQLServerSelectQueryBlock();
-                countQueryBlock.getSelectList().add(new SQLSelectItem(new SQLAllColumnExpr()));
-                countQueryBlock.setFrom(new SQLSubqueryTableSource(select.clone(), "XX"));
-                countQueryBlock.setWhere(pageCondition);
-                select.setQuery(countQueryBlock);
-                return true;
-            }
-        } else {
-            queryBlock = new SQLServerSelectQueryBlock();
-            if (offset <= 0) {
-                queryBlock.setTop(new SQLServerTop(new SQLNumberExpr(count)));
-                select.setQuery(queryBlock);
-                return true;
-            } else {
-                // 重复上述逻辑，因为需要处理非 SQLSelectQueryBlock 的情况
-                SQLSelectQueryBlock selectQueryBlockForNonBlock = new SQLSelectQueryBlock();
-                selectQueryBlockForNonBlock.addSelectItem(new SQLSelectItem(new SQLNullExpr()));
-
-                SQLSelect selectNullForNonBlock = new SQLSelect();
-                selectNullForNonBlock.setQuery(selectQueryBlockForNonBlock);
-
-                SQLQueryExpr selectNullExprForNonBlock = new SQLQueryExpr(selectNullForNonBlock);
-
-                SQLSelectOrderByItem orderByItemForNonBlock = new SQLSelectOrderByItem(selectNullExprForNonBlock);
-                SQLOrderBy orderByNullForNonBlock = new SQLOrderBy();
-                orderByNullForNonBlock.addItem(orderByItemForNonBlock);
-
-                aggregateExpr = new SQLAggregateExpr("ROW_NUMBER");
-                aggregateExpr.setOver(new SQLOver(orderByNullForNonBlock));
-
-                queryBlock.getSelectList().add(new SQLSelectItem(aggregateExpr, "ROWNUM"));
-
-                countQueryBlock = new SQLServerSelectQueryBlock();
-                countQueryBlock.getSelectList().add(new SQLSelectItem(new SQLAllColumnExpr()));
-                countQueryBlock.setFrom(new SQLSubqueryTableSource(new SQLSelect(queryBlock), "XXX"));
-                countQueryBlock.setWhere(pageCondition);
-                select.setQuery(countQueryBlock);
-                return true;
-            }
+        if (query instanceof SQLServerSelectQueryBlock block && offset <= 0 && block.getLimit() == null) {
+            SQLServerTop top = block.getTop();
+            if (check && top != null && !top.isPercent() && top.getExpr() instanceof SQLNumericLiteralExpr numeric
+                    && numeric.getNumber().longValue() <= count) return false;
+            block.setTop(new SQLServerTop(new SQLIntegerExpr(count)));
+            return true;
         }
+        // SQL Server 2012+: OFFSET/FETCH keeps the projection and ORDER BY.
+        // ROW_NUMBER wrappers leaked a column, lost UNION branches and made
+        // ordered queries invalid as derived tables.
+        SQLOrderBy order = select.getOrderBy();
+        if (query instanceof SQLSelectQueryBlock block) {
+            if (order == null) order = block.getOrderBy();
+            if (block instanceof SQLServerSelectQueryBlock sqlServer) sqlServer.setTop(null);
+        } else if (query instanceof SQLUnionQuery union && order == null) order = union.getOrderBy();
+        if (order == null) {
+            var one = new SQLSelectQueryBlock(); one.addSelectItem(new SQLNullExpr());
+            order = new SQLOrderBy(); order.addItem(new SQLSelectOrderByItem(new SQLQueryExpr(new SQLSelect(one))));
+            if (query instanceof SQLSelectQueryBlock block) block.setOrderBy(order);
+            else if (query instanceof SQLUnionQuery union) union.setOrderBy(order);
+            else throw new UnsupportedOperationException("Unsupported SQL Server query shape");
+        }
+        var limit = new SQLLimit(); limit.setOffset(new SQLIntegerExpr(offset)); limit.setRowCount(new SQLIntegerExpr(count));
+        if (query instanceof SQLSelectQueryBlock block) block.setLimit(limit);
+        else if (query instanceof SQLUnionQuery union) union.setLimit(limit);
+        else throw new UnsupportedOperationException("Unsupported SQL Server query shape");
+        return true;
     }
 
 
@@ -543,7 +507,7 @@ public class PageUtils {
     }
 
     public static int getLimit(String sql, DbType dbType) {
-        List<SQLStatement> stmtList = SQLUtils.parseStatements(sql, dbType);
+        List<SQLStatement> stmtList = SqlText.analyze(sql, dbType);
         if (stmtList.size() != 1) {
             return -1;
         } else {

@@ -57,6 +57,7 @@ public class SQLServerSQLHintsHandler extends BaseSQLHintsHandler {
     @Override
     public Map<String, List<String>> getHints(String nodeKey, String context) throws SQLException {
         Map<String, List<String>> suggestions = new HashMap<>();
+        if (!org.jumpserver.chen.framework.session.SessionManager.getCurrentSession().enableAutoComplete()) return suggestions;
 
         var schemas = this.getAllSchemas();
         var schemaNames = schemas.stream().map(Schema::getName).toList();
@@ -69,11 +70,14 @@ public class SQLServerSQLHintsHandler extends BaseSQLHintsHandler {
             suggestions.put(schemaName, tableNames);
         });
 
-        var tableNames = tables.stream().map(Table::getName).toList();
-
-        tableNames.forEach(tableName -> {
-            var fieldNames = fields.stream().filter(field -> field.getTable().equals(tableName)).map(Field::getName).toList();
-            suggestions.put(tableName, fieldNames);
+        tables.forEach(table -> {
+            var fieldNames = fields.stream().filter(field -> field.getTable().equals(table.getName())
+                    && field.getSchema().equals(table.getSchema())).map(Field::getName).toList();
+            suggestions.put(table.getSchema() + "." + table.getName(), fieldNames);
+            // Unqualified names are only unambiguous for a unique table name.
+            if (tables.stream().filter(other -> other.getName().equals(table.getName())).count() == 1) {
+                suggestions.put(table.getName(), fieldNames);
+            }
         });
 
         return suggestions;

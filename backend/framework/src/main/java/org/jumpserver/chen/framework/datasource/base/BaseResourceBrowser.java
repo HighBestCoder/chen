@@ -87,9 +87,7 @@ public abstract class BaseResourceBrowser implements ResourceBrowser {
             }
         }
         var children = this.getChildNodes(node);
-        if (!children.isEmpty()) {
-            this.saveTreeNode(node, children);
-        }
+        this.saveTreeNode(node, children);
         return children;
     }
 
@@ -191,6 +189,45 @@ public abstract class BaseResourceBrowser implements ResourceBrowser {
                 "type", 2,
                 "nullable", 3);
         return new ArrayList<>(this.getSQLActuator().getObjects(sql, Field.class, fieldMapping));
+    }
+
+    /** JDBC metadata uses each driver's own catalog, type and constraint rules. */
+    protected List<Field> getColumnMetadata(String schema, String table) throws SQLException {
+        try (var connection = connectionManager.getConnection()) {
+            var metadata = connection.getMetaData();
+            var type = getSQLActuator().getDbType();
+            boolean catalogSchema = type == com.alibaba.druid.DbType.mysql || type == com.alibaba.druid.DbType.mariadb;
+            String catalog = catalogSchema ? schema : connection.getCatalog();
+            String schemaName = catalogSchema ? null : schema;
+            var keys = new java.util.HashSet<String>();
+            try (var rows = metadata.getPrimaryKeys(catalog, schemaName, table)) {
+                while (rows.next()) keys.add(rows.getString("COLUMN_NAME"));
+            }
+            var fields = new ArrayList<Field>();
+            String escape = metadata.getSearchStringEscape();
+            try (var rows = metadata.getColumns(catalog, metadataPattern(schemaName, escape), metadataPattern(table, escape), null)) {
+                while (rows.next()) {
+                    var field = new Field();
+                    field.setName(rows.getString("COLUMN_NAME"));
+                    field.setType(rows.getString("TYPE_NAME"));
+                    field.setSchema(schema); field.setTable(table);
+                    field.setNullable(rows.getInt("NULLABLE") != java.sql.DatabaseMetaData.columnNoNulls);
+                    field.setPrimaryKey(keys.contains(field.getName()));
+                    fields.add(field);
+                }
+            }
+            return fields;
+        }
+    }
+
+    private String metadataPattern(String name, String escape) {
+        if (name == null || escape == null || escape.isEmpty()) return name;
+        String pattern = name.replace(escape, escape + escape).replace("%", escape + "%").replace("_", escape + "_");
+        // SQL Server LIKE also treats '[' as the start of a character class.
+        if (connectionManager.getDatasource().getDruidDbType() == com.alibaba.druid.DbType.sqlserver) {
+            pattern = pattern.replace("[", escape + "[");
+        }
+        return pattern;
     }
 
     public SQLActuator getSQLActuator() {

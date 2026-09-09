@@ -103,6 +103,7 @@ public class DataView extends SQLResult {
         }
 
         this.state.setPaged(result.isPaged());
+        this.state.setManualLimitDetected(result.isManualLimitDetected());
 
         this.data.getFields().clear();
         this.data.getData().clear();
@@ -232,6 +233,11 @@ public class DataView extends SQLResult {
                             throw new SQLException(e);
                         }
                         written[0]++;
+                    }
+
+                    @Override
+                    public void finish() throws SQLException {
+                        try { w.flush(); } catch (IOException e) { throw new SQLException(e); }
                     }
                 });
 

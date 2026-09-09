@@ -64,9 +64,7 @@ public abstract class BaseSQLActuator implements SQLActuator {
 
     @Override
     public List<String> parseSQL(SQL sql) {
-        return SQLUtils.parseStatements(sql.getSql(), this.druidDbType).stream()
-                .map(stmt -> SQLUtils.toSQLString(stmt, this.druidDbType))
-                .toList();
+        return org.jumpserver.chen.framework.utils.SqlText.statements(sql.getSql(), this.druidDbType);
     }
 
     @Override
@@ -77,8 +75,8 @@ public abstract class BaseSQLActuator implements SQLActuator {
     @Override
     public <T> List<T> getObjects(SQL sql, Class<T> clazz, Map<String, Integer> fieldMapping) throws SQLException {
         List<T> objects = new ArrayList<>();
-        try (Connection conn = this.getConnection();
-             java.sql.PreparedStatement stmt = conn.prepareStatement(sql.getSql())) {
+        Connection conn = this.getConnection();
+        try (java.sql.PreparedStatement stmt = conn.prepareStatement(sql.getSql())) {
             for (int i = 0; i < sql.getParameters().size(); i++) stmt.setObject(i + 1, sql.getParameters().get(i));
             try (ResultSet rs = stmt.executeQuery()) {
                 while (rs.next()) {
@@ -94,7 +92,10 @@ public abstract class BaseSQLActuator implements SQLActuator {
             }
         } catch (Exception e) {
             var msg = "run sql %s error, %s".formatted(sql, e.getMessage());
-            throw new SQLException(msg);
+            if (e instanceof SQLException sqlError) throw new SQLException(msg, sqlError.getSQLState(), sqlError.getErrorCode(), sqlError);
+            throw new SQLException(msg, e);
+        } finally {
+            if (this.connection == null) conn.close();
         }
         return objects;
     }
@@ -118,38 +119,55 @@ public abstract class BaseSQLActuator implements SQLActuator {
         result.setManualLimitDetected(plan.isManualLimitDetected());
         boolean streamingExport = plan.getRowConsumer() != null;
         Connection planConn = plan.getConnection();
-        Boolean priorAutoCommit = null;
+        boolean ownedTransaction = false;
+        Throwable failure = null;
         try {
-            // Streaming export reads the full result row-by-row to disk. For a
-            // server-side cursor to actually stream (rather than the driver
-            // buffering the whole result client-side and risking OOM), some
-            // drivers — notably PostgreSQL — require autoCommit=false. A SELECT
-            // commits nothing, so toggling this for the read is invisible to the
-            // client; we restore the prior value in finally so the pooled
-            // connection is handed back unchanged.
+            // PostgreSQL streaming cursors require a transaction. Only finish
+            // transactions we started; SQL functions can write even in SELECT.
             if (streamingExport && planConn != null && planConn.getAutoCommit()) {
-                priorAutoCommit = Boolean.TRUE;
                 planConn.setAutoCommit(false);
+                ownedTransaction = true;
             }
             Statement statement = plan.createStatement();
             applyQueryTimeout(statement, plan);
             applyFetchStreaming(statement, plan);
             this.executeStatement(plan, statement, result);
+            if (result.isHasResultSet() && !streamingExport) {
+                int total = count(plan);
+                if (total >= 0) { result.setPaged(true); result.setTotal(total); }
+            }
+            if (ownedTransaction) planConn.commit();
+        } catch (SQLException | RuntimeException | Error error) {
+            failure = error;
+            throw error;
         } finally {
-            if (priorAutoCommit != null) {
-                try {
-                    planConn.commit();
-                } catch (SQLException e) {
-                    log.debug("commit after streaming export failed (non-fatal): {}", e.getMessage());
+            SQLException cleanupFailure = null;
+            if (ownedTransaction) {
+                boolean transactionFinished = failure == null;
+                if (failure != null) {
+                    try { planConn.rollback(); transactionFinished = true; }
+                    catch (SQLException error) { cleanupFailure = error; }
                 }
                 try {
-                    planConn.setAutoCommit(priorAutoCommit);
-                } catch (SQLException e) {
-                    log.debug("restore autoCommit after streaming export failed (non-fatal): {}", e.getMessage());
+                    // Restoring autoCommit after a failed rollback can commit
+                    // unfinished writes. Retire that connection instead.
+                    if (transactionFinished) planConn.setAutoCommit(true);
+                    else planConn.close();
+                } catch (SQLException error) {
+                    if (cleanupFailure == null) cleanupFailure = error;
+                    else cleanupFailure.addSuppressed(error);
                 }
             }
-            if (plan.getConnection() instanceof DruidPooledConnection) {
-                plan.getConnection().close();
+            if (planConn instanceof DruidPooledConnection) {
+                try { planConn.close(); }
+                catch (SQLException error) {
+                    if (cleanupFailure == null) cleanupFailure = error;
+                    else cleanupFailure.addSuppressed(error);
+                }
+            }
+            if (cleanupFailure != null) {
+                if (failure != null) failure.addSuppressed(cleanupFailure);
+                else throw cleanupFailure;
             }
         }
         return result;
@@ -205,7 +223,10 @@ public abstract class BaseSQLActuator implements SQLActuator {
         try {
             DbType dbType = plan.getDruidDbType();
             if (dbType == DbType.mysql || dbType == DbType.mariadb) {
-                statement.setFetchSize(Integer.MIN_VALUE);
+                // Connector/J cannot advance multiple streaming outputs from
+                // CALL. Procedure results are checked explicitly below; only
+                // SELECT is eligible for row-by-row streaming here.
+                if (plan.getTargetSQLStatement() instanceof SQLSelectStatement) statement.setFetchSize(Integer.MIN_VALUE);
             } else {
                 statement.setFetchSize(1000);
             }
@@ -306,6 +327,7 @@ public abstract class BaseSQLActuator implements SQLActuator {
                     }
                 }
                 resultSet.close();
+                if (sink != null) sink.finish();
                 // 主键查询必须等结果集关闭之后再做：MySQL 驱动是流式读取，
                 // 结果集还开着时同一连接上发任何语句都会抛
                 // "Streaming result set ... is still active"。
@@ -326,22 +348,16 @@ public abstract class BaseSQLActuator implements SQLActuator {
                     result.setSizeByColumnSourceUnavailableReason(columnStatsReason);
                 }
 
-                if (sink != null) {
-                    // Streaming export: rows were not retained and no total is
-                    // needed, so skip the extra full-table count scan.
-                    result.setTotal((int) rowCount);
-                } else {
-                    var total = this.count(plan);
-                    if (total < 0) {
-                        result.setTotal((int) rowCount);
-                    } else {
-                        result.setPaged(true);
-                        result.setTotal(total);
-                    }
-                }
+                result.setTotal((int) rowCount);
 
             } else {
                 result.setUpdateCount(statement.getUpdateCount());
+            }
+            // Do not silently report success for only the first output of a
+            // stored procedure. Advancing also surfaces delayed JDBC errors.
+            if (statement.getMoreResults() || statement.getUpdateCount() != -1) {
+                throw new SQLException("Command produced multiple results, which this result view cannot display. "
+                        + "Database operations may already have executed; inspect the database before retrying.");
             }
             result.setEndTime(new Time(System.currentTimeMillis()));
         } catch (SQLException e) {
@@ -394,79 +410,60 @@ public abstract class BaseSQLActuator implements SQLActuator {
 
     private static void applyPrimaryKeys(Statement statement, ResultSetMetaData metadata,
                                          List<Field> fields, List<String> rawColumnNames) {
-        Set<String> tables = new LinkedHashSet<>();
-        for (Field field : fields) {
-            if (field.getTable() != null && !field.getTable().isEmpty()) {
-                tables.add(field.getTable());
-            }
-        }
-        if (tables.isEmpty() || tables.size() > PK_LOOKUP_MAX_TABLES) {
-            return;
-        }
-
+        record Scope(String catalog, String schema, String table) {}
         try {
             Connection connection = statement.getConnection();
-            if (connection == null) {
-                return;
-            }
+            if (connection == null) return;
             DatabaseMetaData dbMetadata = connection.getMetaData();
-            if (dbMetadata == null) {
-                return;
+            if (dbMetadata == null) return;
+            List<Scope> scopes = new ArrayList<>();
+            Set<Scope> tables = new LinkedHashSet<>();
+            for (int i = 0; i < fields.size(); i++) {
+                String catalog = metadataString(metadata, i + 1, MetadataField.CATALOG);
+                String schema = fields.get(i).getSchema();
+                if (catalog.isEmpty()) catalog = safeConnectionScope(connection, true);
+                if (schema == null || schema.isEmpty()) schema = safeConnectionScope(connection, false);
+                var scope = new Scope(catalog, schema, fields.get(i).getTable());
+                scopes.add(scope);
+                if (scope.table() != null && !scope.table().isEmpty()) tables.add(scope);
             }
-            Map<String, Set<String>> pkColumnsByTable = new HashMap<>();
-            for (String table : tables) {
-                int index = -1;
-                for (int i = 0; i < fields.size(); i++) {
-                    if (table.equals(fields.get(i).getTable())) {
-                        index = i;
-                        break;
-                    }
+            if (tables.size() > PK_LOOKUP_MAX_TABLES) return;
+            Map<Scope, Set<String>> primaryKeys = new HashMap<>();
+            for (Scope scope : tables) {
+                Set<String> names = new HashSet<>();
+                try (var rs = dbMetadata.getPrimaryKeys(scope.catalog().isEmpty() ? null : scope.catalog(),
+                        scope.schema().isEmpty() ? null : scope.schema(), scope.table())) {
+                    while (rs.next()) names.add(rs.getString("COLUMN_NAME"));
                 }
-                // MySQL 把库名放在 catalog，PostgreSQL / SQL Server 放在 schema。
-                // 结果集元数据里这两项常常是空的（实测 MySQL 8 驱动 catalog/schema
-                // 都返回空串），而 Connector/J 8 的 nullCatalogMeansCurrent 默认为
-                // false，null catalog 不会退回当前库，主键就查不到 —— 所以空的时候
-                // 从连接本身兜底。
-                String catalog = index < 0 ? "" : metadataString(metadata, index + 1, MetadataField.CATALOG);
-                String schema = index < 0 ? "" : fields.get(index).getSchema();
-                if (catalog == null || catalog.isEmpty()) {
-                    catalog = safeConnectionScope(connection, true);
-                }
-                if (schema == null || schema.isEmpty()) {
-                    schema = safeConnectionScope(connection, false);
-                }
-                Set<String> pkColumns = new HashSet<>();
-                try (var rs = dbMetadata.getPrimaryKeys(
-                        catalog.isEmpty() ? null : catalog,
-                        schema.isEmpty() ? null : schema,
-                        table)) {
-                    while (rs.next()) {
-                        pkColumns.add(rs.getString("COLUMN_NAME"));
-                    }
-                }
-                if (pkColumns.isEmpty()) {
-                    log.debug("No primary key resolved for table {} (catalog={} schema={})",
-                            table, catalog, schema);
-                }
-                pkColumnsByTable.put(table, pkColumns);
+                primaryKeys.put(scope, names);
             }
             for (int i = 0; i < fields.size(); i++) {
-                Field field = fields.get(i);
-                Set<String> pkColumns = pkColumnsByTable.get(field.getTable());
-                String rawName = i < rawColumnNames.size() ? rawColumnNames.get(i) : null;
-                if (pkColumns != null && rawName != null && pkColumns.contains(rawName)) {
-                    field.setPrimaryKey(true);
-                }
+                fields.get(i).setPrimaryKey(primaryKeys.getOrDefault(scopes.get(i), Set.of()).contains(rawColumnNames.get(i)));
             }
         } catch (Throwable e) {
-            // fail-open：约束信息拿不到不影响查询本身，但必须留痕，
-            // 否则「主键为什么没标出来」完全无从排查。
-            log.warn("Primary key lookup failed for tables {}: {}", tables, e.toString());
+            log.warn("Primary key lookup failed: {}", e.toString());
         }
     }
 
     private static String metadataString(ResultSetMetaData metadata, int index, MetadataField field) {
         try {
+            // PostgreSQL's standard getSchemaName is empty and getColumnName
+            // can be an alias. Its PGResultSetMetaData exposes the base origin.
+            // Drivers live in isolated loaders, so do not link their classes.
+            ResultSetMetaData raw = metadata instanceof com.alibaba.druid.proxy.jdbc.ResultSetMetaDataProxy proxy
+                    ? proxy.getResultSetMetaDataRaw() : metadata;
+            String baseMethod = switch (field) {
+                case NAME -> "getBaseColumnName";
+                case TABLE -> "getBaseTableName";
+                case SCHEMA -> "getBaseSchemaName";
+                default -> null;
+            };
+            if (baseMethod != null) {
+                try {
+                    Object value = raw.getClass().getMethod(baseMethod, int.class).invoke(raw, index);
+                    if (value instanceof String text && !text.isEmpty()) return text;
+                } catch (ReflectiveOperationException ignored) { }
+            }
             String value = switch (field) {
                 case LABEL -> metadata.getColumnLabel(index);
                 case NAME -> metadata.getColumnName(index);
@@ -494,7 +491,7 @@ public abstract class BaseSQLActuator implements SQLActuator {
     @Override
     public SQLQueryResult executeWithAudit(SQL sql) throws SQLException {
         var plan = this.createPlan(sql);
-        return plan.executeWithAudit();
+        try { return plan.executeWithAudit(); } finally { plan.close(); }
     }
 
     @Override
@@ -508,25 +505,42 @@ public abstract class BaseSQLActuator implements SQLActuator {
     }
 
     public int count(SQL sql) throws SQLException {
-        return this.count(this.createPlan(sql));
+        var plan = this.createPlan(sql);
+        try { return this.count(plan); } finally { plan.close(); }
     }
 
     public int count(SQLExecutePlan plan) throws SQLException {
         // Bound metadata results are small, non-paged lookups. Never run an
         // unbound count or pass SQL text to PreparedStatement.executeQuery.
         if (!plan.getParameters().isEmpty()) return -1;
+        if (plan.getCachedCount() != null) return plan.getCachedCount();
         String countSQL;
         if (plan.getQuotedPreviewTable() != null) {
             countSQL = "SELECT COUNT(*) FROM " + plan.getQuotedPreviewTable();
         } else {
-            if (!(plan.getTargetSQLStatement() instanceof SQLSelectStatement)) return -1;
-            if (PageUtils.getLimit(plan.getSourceSQL(), plan.getDruidDbType()) > 0) return -1;
-            countSQL = PagerUtils.count(plan.getSourceSQL(), plan.getDruidDbType());
+            if (!(plan.getTargetSQLStatement() instanceof SQLSelectStatement select)) return -1;
+            // A count rewrite is an extra execution. Never replay explicit
+            // function calls, CTEs or SELECT INTO as a hidden metadata lookup.
+            final boolean[] unsafe = {false};
+            select.accept(new com.alibaba.druid.sql.visitor.SQLASTVisitorAdapter() {
+                @Override public void preVisit(com.alibaba.druid.sql.ast.SQLObject node) {
+                    if (node instanceof com.alibaba.druid.sql.ast.expr.SQLMethodInvokeExpr
+                            || node instanceof com.alibaba.druid.sql.ast.statement.SQLWithSubqueryClause
+                            || (node instanceof com.alibaba.druid.sql.ast.statement.SQLSelectQueryBlock block
+                                && block.getInto() != null)) unsafe[0] = true;
+                }
+            });
+            if (unsafe[0]) return -1;
+            if (PageUtils.getLimit(plan.getSourceSQL(), plan.getDruidDbType()) >= 0) return -1;
+            countSQL = org.jumpserver.chen.framework.utils.SqlText.rewrite(plan.getSourceSQL(), plan.getDruidDbType(),
+                    text -> PagerUtils.count(text, plan.getDruidDbType()));
         }
         try (Statement stmt = plan.createStatement()) {
             applyQueryTimeout(stmt, plan);
             try (var rows = stmt.executeQuery(countSQL)) {
-                return rows.next() ? rows.getInt(1) : -1;
+                int total = rows.next() ? rows.getInt(1) : -1;
+                plan.setCachedCount(total);
+                return total;
             }
         }
     }
@@ -566,8 +580,8 @@ public abstract class BaseSQLActuator implements SQLActuator {
         plan.setParameters(sql.getParameters());
         plan.setSqlQueryParams(queryParams);
         this.createPlan(plan);
-        plan.generateTargetSQL();
-        return plan;
+        try { plan.generateTargetSQL(); return plan; }
+        catch (SQLException | RuntimeException failure) { plan.close(); throw failure; }
     }
 
     private void createPlan(SQLExecutePlan plan) throws SQLException {
