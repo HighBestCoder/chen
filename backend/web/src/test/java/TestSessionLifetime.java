@@ -22,7 +22,7 @@ public class TestSessionLifetime {
         commandHandler.set(session,Proxy.newProxyInstance(handlerType.getClassLoader(),new Class[]{handlerType},(p,m,a)->null));
         Field activity=JMSSession.class.getDeclaredField("lastActiveTime");activity.setAccessible(true);activity.setLong(session,0);
         session.recordCommand(new org.jumpserver.chen.framework.jms.entity.CommandRecord("db.items.find({})"));
-        if(activity.getLong(session)==0)failures.add("Mongo command record did not refresh idle activity");
+        if(activity.getLong(session)!=0)failures.add("expired session was revived by command audit");
         Method start=JMSSession.class.getDeclaredMethod("startWaitIdleTime");start.setAccessible(true);
         try {
             start.invoke(session);

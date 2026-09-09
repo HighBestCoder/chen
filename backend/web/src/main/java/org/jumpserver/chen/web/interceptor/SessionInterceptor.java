@@ -25,6 +25,10 @@ public class SessionInterceptor implements HandlerInterceptor {
             return false;
         }
 
+        var session = SessionManager.getSession(token);
+        if (session instanceof org.jumpserver.chen.framework.session.impl.JMSSession jms && !jms.allowsExecution()) {
+            resp.setStatus(403); resp.getWriter().write("Session locked or expired"); return false;
+        }
         SessionManager.setContext(token);
         return true;
     }

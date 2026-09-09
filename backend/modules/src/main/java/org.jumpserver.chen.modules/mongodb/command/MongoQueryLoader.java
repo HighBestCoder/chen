@@ -45,13 +45,8 @@ public final class MongoQueryLoader implements LoadDataInterface {
             firstLoad = false;
             ACLResult acl = initial ? initialApproval : session.checkACL(commandText);
             record.applyACL(acl);
-            if (acl != null && (acl.getRiskLevel() == Common.RiskLevel.Reject
-                    || acl.getRiskLevel() == Common.RiskLevel.ReviewReject)) {
+            if (acl != null && !acl.allows(commandText)) {
                 throw new MongoCommandException("Command rejected by ACL");
-            }
-            if (acl != null && acl.getApprovedCommandHash() != null
-                    && !acl.getApprovedCommandHash().equals(ACLFilterImpl.commandHash(commandText))) {
-                throw new MongoCommandException("Approved command hash mismatch");
             }
             SQLQueryResult result = actuator.execute(command, params.getOffset(), params.getLimit());
             if (sink != null && result.isHasResultSet()) {

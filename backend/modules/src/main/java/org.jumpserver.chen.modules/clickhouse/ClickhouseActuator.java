@@ -33,13 +33,17 @@ public class ClickhouseActuator extends BaseSQLActuator {
 
     @Override
     public void changeSchema(String schema) throws SQLException {
-        this.execute(SQL.of("use `?`", schema));
+        this.execute(SQL.of("USE " + quoteIdentifier(schema)));
     }
 
 
     @Override
     public SQLExecutePlan createPlan(String schema, String table, SQLQueryParams sqlQueryParams) throws SQLException {
-        var sql = SQL.of("select * from `?`.`?`", schema, table);
-        return this.createPlan(sql, sqlQueryParams);
+        return this.createPreviewPlan(quoteIdentifier(schema) + "." + quoteIdentifier(table), sqlQueryParams);
+    }
+
+    private static String quoteIdentifier(String value) {
+        if (value == null) throw new IllegalArgumentException("Missing database identifier");
+        return "`" + value.replace("\\", "\\\\").replace("`", "\\`") + "`";
     }
 }

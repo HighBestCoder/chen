@@ -90,6 +90,43 @@ public class TestConnectionTlsIntegration {
             System.out.println("PASS "+type+" special database name and pool context");passed++;
         } finally {manager.close();}
     }
+    static String quote(String type,String name) {
+        String end=type.equals("mysql")?"`":type.equals("sqlserver")?"]":"\"";
+        return (type.equals("sqlserver")?"[":end)+name.replace(end,end+end)+end;
+    }
+    static void resourceNames(String type) throws Exception {
+        var manager=manager(info(type));
+        String schema=type.equals("postgresql")?"public":type.equals("mysql")?"fixture":"dbo";
+        String name="probe'`\"]$?\\;--";
+        String qualified=quote(type,schema)+"."+quote(type,name);
+        try {
+            manager.ping();
+            try(var connection=manager.getConnection();var statement=connection.createStatement()) {
+                statement.execute("CREATE TABLE "+qualified+" (id INT)");
+                statement.execute("INSERT INTO "+qualified+" VALUES (7)");
+            }
+            var actuator=manager.getSqlActuator();
+            var plan=actuator.createPlan(schema,name,null);
+            var rows=plan.execute();
+            if(rows.getData().size()!=1 || ((Number)rows.getData().get(0).get(0)).intValue()!=7)
+                throw new AssertionError(type+" quoted preview selected wrong table");
+            var params=new org.jumpserver.chen.framework.datasource.sql.SQLQueryParams();params.setLimit(1);
+            var paged=actuator.createPlan(schema,name,params).execute();
+            if(paged.getData().size()!=1)throw new AssertionError(type+" paged special identifier failed");
+            var query=org.jumpserver.chen.framework.datasource.sql.SQL.bound(
+                "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",schema,name);
+            var tables=actuator.getObjects(query,org.jumpserver.chen.framework.datasource.entity.resource.Table.class,Map.of("name",1));
+            if(tables.size()!=1 || !name.equals(tables.get(0).getName()))throw new AssertionError(type+" bound metadata lost special name");
+            query=org.jumpserver.chen.framework.datasource.sql.SQL.bound(
+                "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ?", "x' OR 1=1 --");
+            if(!actuator.getObjects(query,org.jumpserver.chen.framework.datasource.entity.resource.Table.class,Map.of("name",1)).isEmpty())
+                throw new AssertionError(type+" metadata parameter changed predicate");
+            var result=actuator.execute(org.jumpserver.chen.framework.datasource.sql.SQL.bound(
+                "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",schema,name));
+            if(result.getData().size()!=1 || !name.equals(result.getData().get(0).get(0)))throw new AssertionError(type+" property binding failed");
+            System.out.println("PASS "+type+" special resource identifiers, bound metadata/property and injection rejection");passed++;
+        } finally {manager.close();}
+    }
     static void renewedPhysicalConnection(String type) throws Exception {
         var info=info(type);
         var now=new java.util.concurrent.atomic.AtomicLong(java.time.Instant.now().getEpochSecond());
@@ -190,7 +227,7 @@ public class TestConnectionTlsIntegration {
                 var mutual=info(type);mutual.getOptions().put("clientCert",pem("client.crt"));mutual.getOptions().put("clientKey",pem("client.key"));check("unsupported TLS client identity explicitly rejected",mutual,false);
             }
             var incomplete=info(type);incomplete.getOptions().put("clientCert",pem("client.crt"));incomplete.getOptions().remove("clientKey");check("incomplete certificate pair rejected",incomplete,false);
-            if(!type.equals("mongodb"))specialDatabase(type);
+            if(!type.equals("mongodb")){specialDatabase(type); resourceNames(type);}
         }
         try(var generator=new org.jumpserver.chen.framework.ssl.JKSGenerator(pem("client.crt")+pem("ca.crt"),pem("client.key"))) {
             var store=java.security.KeyStore.getInstance("JKS");

@@ -58,36 +58,8 @@ public abstract class BaseSQLActuator implements SQLActuator {
 
     @Override
     public int getAffectedRows(SQL sql) throws SQLException {
-        var result = 0;
-
-        var sqlStmts = SQLUtils.parseStatements(sql.getSql(), this.druidDbType);
-
-        if (sqlStmts.size() != 1) {
-            return -1;
-        }
-
-        var sqlStmt = sqlStmts.get(0);
-
-        if (sqlStmt instanceof SQLUpdateStatement || sqlStmt instanceof SQLDeleteStatement || sqlStmt instanceof SQLInsertStatement) {
-            var conn = this.getConnection();
-            try {
-                conn.setAutoCommit(false);
-                var stmt = conn.createStatement();
-                stmt.execute(sqlStmt.toString());
-
-                result = stmt.getUpdateCount();
-
-                conn.rollback();
-                stmt.close();
-            } finally {
-                if (this.connection == null) {
-                    conn.close();
-                } else {
-                    conn.setAutoCommit(true);
-                }
-            }
-        }
-        return result;
+        // Approval must not execute SQL to estimate effects. -1 means unknown.
+        return -1;
     }
 
     @Override
@@ -99,19 +71,26 @@ public abstract class BaseSQLActuator implements SQLActuator {
 
     @Override
     public <T> List<T> getObjects(String sql, Class<T> clazz, Map<String, Integer> fieldMapping) throws SQLException {
+        return getObjects(SQL.of(sql), clazz, fieldMapping);
+    }
+
+    @Override
+    public <T> List<T> getObjects(SQL sql, Class<T> clazz, Map<String, Integer> fieldMapping) throws SQLException {
         List<T> objects = new ArrayList<>();
         try (Connection conn = this.getConnection();
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(sql)) {
-            while (rs.next()) {
-                T object = clazz.getDeclaredConstructor().newInstance();
-                for (Map.Entry<String, Integer> entry : fieldMapping.entrySet()) {
-                    if (entry.getValue() == null || entry.getValue() < 1 || entry.getValue() > rs.getMetaData().getColumnCount()) {
-                        continue;
+             java.sql.PreparedStatement stmt = conn.prepareStatement(sql.getSql())) {
+            for (int i = 0; i < sql.getParameters().size(); i++) stmt.setObject(i + 1, sql.getParameters().get(i));
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    T object = clazz.getDeclaredConstructor().newInstance();
+                    for (Map.Entry<String, Integer> entry : fieldMapping.entrySet()) {
+                        if (entry.getValue() == null || entry.getValue() < 1 || entry.getValue() > rs.getMetaData().getColumnCount()) {
+                            continue;
+                        }
+                        ReflectUtils.setFieldValue(object, entry.getKey(), rs.getObject(entry.getValue()));
                     }
-                    ReflectUtils.setFieldValue(object, entry.getKey(), rs.getObject(entry.getValue()));
+                    objects.add(object);
                 }
-                objects.add(object);
             }
         } catch (Exception e) {
             var msg = "run sql %s error, %s".formatted(sql, e.getMessage());
@@ -239,7 +218,8 @@ public abstract class BaseSQLActuator implements SQLActuator {
         try (statement) {
             result.setStartTime(new Time(System.currentTimeMillis()));
 
-            var hasResult = statement.execute(plan.getTargetSQL());
+            var hasResult = statement instanceof java.sql.PreparedStatement prepared
+                    ? prepared.execute() : statement.execute(plan.getTargetSQL());
             result.setHasResultSet(hasResult);
 
             result.setQueryFinishedTime(new Time(System.currentTimeMillis()));
@@ -532,21 +512,31 @@ public abstract class BaseSQLActuator implements SQLActuator {
     }
 
     public int count(SQLExecutePlan plan) throws SQLException {
-        if (plan.getTargetSQLStatement() instanceof SQLSelectStatement) {
-            var limit = PageUtils.getLimit(plan.getSourceSQL(), plan.getDruidDbType());
-            if (limit > 0) {
-                return -1;
-            }
-            var countSQL = PagerUtils.count(plan.getSourceSQL(), plan.getDruidDbType());
-            try (Statement stmt = plan.createStatement()) {
-                applyQueryTimeout(stmt, plan);
-                var resultSet = stmt.executeQuery(countSQL);
-                if (resultSet.next()) {
-                    return resultSet.getInt(1);
-                }
+        // Bound metadata results are small, non-paged lookups. Never run an
+        // unbound count or pass SQL text to PreparedStatement.executeQuery.
+        if (!plan.getParameters().isEmpty()) return -1;
+        String countSQL;
+        if (plan.getQuotedPreviewTable() != null) {
+            countSQL = "SELECT COUNT(*) FROM " + plan.getQuotedPreviewTable();
+        } else {
+            if (!(plan.getTargetSQLStatement() instanceof SQLSelectStatement)) return -1;
+            if (PageUtils.getLimit(plan.getSourceSQL(), plan.getDruidDbType()) > 0) return -1;
+            countSQL = PagerUtils.count(plan.getSourceSQL(), plan.getDruidDbType());
+        }
+        try (Statement stmt = plan.createStatement()) {
+            applyQueryTimeout(stmt, plan);
+            try (var rows = stmt.executeQuery(countSQL)) {
+                return rows.next() ? rows.getInt(1) : -1;
             }
         }
-        return -1;
+    }
+
+    protected SQLExecutePlan createPreviewPlan(String quotedTable, SQLQueryParams params) throws SQLException {
+        var plan = createPlan(SQL.of("SELECT * FROM " + quotedTable));
+        plan.setQuotedPreviewTable(quotedTable);
+        plan.setSqlQueryParams(params);
+        try { plan.generateTargetSQL(); return plan; }
+        catch (SQLException | RuntimeException failure) { plan.close(); throw failure; }
     }
 
 
@@ -565,6 +555,7 @@ public abstract class BaseSQLActuator implements SQLActuator {
     @Override
     public SQLExecutePlan createPlan(SQL sql) throws SQLException {
         SQLExecutePlan plan = new SQLExecutePlan(sql.getSql(), this.getDruidDbType());
+        plan.setParameters(sql.getParameters());
         this.createPlan(plan);
         return plan;
     }
@@ -572,6 +563,7 @@ public abstract class BaseSQLActuator implements SQLActuator {
     @Override
     public SQLExecutePlan createPlan(SQL sql, SQLQueryParams queryParams) throws SQLException {
         SQLExecutePlan plan = new SQLExecutePlan(sql.getSql(), this.getDruidDbType());
+        plan.setParameters(sql.getParameters());
         plan.setSqlQueryParams(queryParams);
         this.createPlan(plan);
         plan.generateTargetSQL();

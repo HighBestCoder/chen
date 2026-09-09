@@ -123,16 +123,32 @@ public class JMSSession extends BaseSession {
 
     @Override
     public ACLResult checkACL(String command) {
-        return this.aclFilter.commandACLFilter(command, null);
+        return checkACL(command, null);
     }
 
     public ACLResult checkACL(String command, Connection connection) {
-        return this.aclFilter.commandACLFilter(command, connection);
+        return checkACLBatch(command, java.util.List.of(), connection);
+    }
+
+    public boolean allowsExecution() { return isActive() && allowsCredentialRenewal(); }
+
+    @Override
+    public ACLResult checkACLBatch(String command, java.util.List<String> statements, Connection connection) {
+        if (!allowsExecution()) return deniedExecution();
+        var result = this.aclFilter.commandACLFilterBatch(command, statements, connection);
+        return allowsExecution() ? result : deniedExecution();
+    }
+
+    private static ACLResult deniedExecution() {
+        var result = new ACLResult();
+        result.setRiskLevel(Common.RiskLevel.Reject);
+        result.setRiskAction("session_unavailable");
+        return result;
     }
 
     @Override
     public void recordCommand(CommandRecord commandRecord) {
-        this.lastActiveTime = System.currentTimeMillis();
+        if (allowsExecution()) this.lastActiveTime = System.currentTimeMillis();
         this.commandHandler.recordCommand(commandRecord);
     }
 
@@ -290,10 +306,8 @@ public class JMSSession extends BaseSession {
     @Override
     public SQLQueryResult withAudit(String command, QueryAuditFunction queryAuditFunction) throws SQLException, CommandRejectException {
         synchronized (this) {
+            if (!allowsExecution()) throw new CommandRejectException(MessageUtils.get("msg.error.session_unavailable"));
             this.lastActiveTime = System.currentTimeMillis();
-        }
-        if (this.locked) {
-            throw new CommandRejectException(MessageUtils.get("msg.error.session_locked"));
         }
 
         CommandRecord commandRecord = new CommandRecord(command);

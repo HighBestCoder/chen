@@ -33,13 +33,12 @@ public class OracleActuator extends BaseSQLActuator {
 
     @Override
     public void changeSchema(String schema) throws SQLException {
-        this.execute(SQL.of("ALTER SESSION SET CURRENT_SCHEMA = ?", schema));
+        this.execute(SQL.of("ALTER SESSION SET CURRENT_SCHEMA = " + quoteIdentifier(schema)));
     }
 
     @Override
     public SQLExecutePlan createPlan(String schema, String table, SQLQueryParams sqlQueryParams) throws SQLException {
-        var sql = SQL.of("select * from ?.\"?\"", schema, table);
-        return this.createPlan(sql, sqlQueryParams);
+        return this.createPreviewPlan(quoteIdentifier(schema) + "." + quoteIdentifier(table), sqlQueryParams);
     }
 
 
@@ -58,5 +57,10 @@ public class OracleActuator extends BaseSQLActuator {
     public SQLExecutePlan createPlan(SQL sql) throws SQLException {
         this.beforeCreatePlan(sql);
         return super.createPlan(sql);
+    }
+
+    private static String quoteIdentifier(String value) {
+        if (value == null) throw new IllegalArgumentException("Missing database identifier");
+        return "\"" + value.replace("\"", "\"\"") + "\"";
     }
 }

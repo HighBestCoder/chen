@@ -260,34 +260,24 @@ public class QueryConsole extends AbstractConsole {
 
         ACLResult aclResult = null;
         try {
-            aclResult = session.checkACL(sql, this.getConnection());
+            var stmts = this.getSqlActuator().parseSQL(SQL.of(sql));
+            aclResult = session.checkACLBatch(sql, stmts, this.getConnection());
             if (aclResult != null) {
-                if (aclResult.getRiskLevel() == Common.RiskLevel.Reject || aclResult.getRiskLevel() == Common.RiskLevel.ReviewReject) {
-                    this.getConsoleLogger().error("%s", MessageUtils.get("msg.error.acl_reject"));
+                if (!aclResult.allows(sql)) {
+                    this.getConsoleLogger().error("%s", aclResult.denialMessage());
                     CommandRecord commandRecord = new CommandRecord(sql);
                     commandRecord.applyACL(aclResult);
+                    commandRecord.setError(aclResult.denialMessage());
                     session.recordCommand(commandRecord);
 
                     this.getState().setInQuery(false);
                     this.stateManager.commit();
                     return;
                 }
-                if (aclResult.getApprovedCommandHash() != null
-                        && !aclResult.getApprovedCommandHash().equals(ACLFilterImpl.commandHash(sql))) {
-                    this.getConsoleLogger().error("%s", MessageUtils.get("msg.error.acl_reject"));
-                    CommandRecord commandRecord = new CommandRecord(sql);
-                    commandRecord.applyACL(aclResult);
-                    commandRecord.setError("approved command hash mismatch");
-                    session.recordCommand(commandRecord);
 
-                    this.getState().setInQuery(false);
-                    this.stateManager.commit();
-                    return;
-                }
             }
 
 
-            var stmts = this.getSqlActuator().parseSQL(SQL.of(sql));
             var clearOthers = true;
             for (String stmt : stmts) {
                 var dataView = this.runSingleSQL(stmt, aclResult);
@@ -378,10 +368,7 @@ public class QueryConsole extends AbstractConsole {
                 ACLResult fresh = null;
                 try {
                     fresh = SessionManager.getCurrentSession().checkACL(plan.getSourceSQL(), this.getConnection());
-                    if (fresh != null && (fresh.getRiskLevel() == Common.RiskLevel.Reject
-                            || fresh.getRiskLevel() == Common.RiskLevel.ReviewReject
-                            || (fresh.getApprovedCommandHash() != null && !fresh.getApprovedCommandHash()
-                            .equals(ACLFilterImpl.commandHash(plan.getSourceSQL()))))) {
+                    if (fresh != null && !fresh.allows(plan.getSourceSQL())) {
                         throw new SQLException("Command rejected by ACL or approved command hash mismatch");
                     }
                     plan.setAclResult(fresh);
