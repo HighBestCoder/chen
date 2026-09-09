@@ -29,18 +29,9 @@ import java.util.regex.Pattern;
  */
 public class MongoCommandParser {
 
-    /** {@code db.<collection>.<op>(<args>)} — group 1 is greedy so the last {@code .op(} wins. */
     private static final Pattern CALL = Pattern.compile(
-            "^db\\.([A-Za-z0-9_.$-]+)\\.([A-Za-z][A-Za-z0-9]*)\\s*\\((.*)\\)$",
-            Pattern.DOTALL);
-    private static final Pattern SORT_CLAUSE = Pattern.compile(
-            "\\.sort\\((\\{.*?})\\)\\s*$", Pattern.DOTALL);
-    private static final Pattern LIMIT_CLAUSE = Pattern.compile(
-            "\\.limit\\((\\d+)\\)\\s*$");
-    private static final Pattern FORBIDDEN = Pattern.compile(
-            "\\$where|\\$function|\\$accumulator|mapReduce|\\beval\\b",
-            Pattern.CASE_INSENSITIVE);
-
+            "^db\\.([A-Za-z0-9_.$-]+)\\.([A-Za-z][A-Za-z0-9]*)\\s*\\(");
+    private static final Pattern MODIFIER = Pattern.compile("^\\.(sort|limit)\\s*\\(");
     private static final String ALLOWED =
             "Allowed: find / aggregate / insertOne / insertMany / updateOne / updateMany"
                     + " / deleteOne / deleteMany / drop / show dbs / show collections / use <db>";
@@ -53,10 +44,6 @@ public class MongoCommandParser {
         if (text.isEmpty()) {
             throw new MongoCommandException("Empty command");
         }
-        if (FORBIDDEN.matcher(text).find()) {
-            throw new MongoCommandException("Operator not allowed in restricted console: " + text);
-        }
-
         String lower = text.toLowerCase();
         if (lower.equals("show dbs") || lower.equals("show databases")) {
             return MongoCommand.showDbs(text);
@@ -78,29 +65,48 @@ public class MongoCommandParser {
     }
 
     private MongoCommand parseCall(String text) {
-        String work = text;
-        Integer limit = null;
-        Document sort = null;
-
-        Matcher limitMatcher = LIMIT_CLAUSE.matcher(work);
-        if (limitMatcher.find()) {
-            limit = Integer.parseInt(limitMatcher.group(1));
-            work = work.substring(0, limitMatcher.start()).trim();
-        }
-
-        Matcher sortMatcher = SORT_CLAUSE.matcher(work);
-        if (sortMatcher.find()) {
-            sort = parseJson(sortMatcher.group(1), "sort");
-            work = work.substring(0, sortMatcher.start()).trim();
-        }
-
-        Matcher callMatcher = CALL.matcher(work);
-        if (!callMatcher.matches()) {
+        Matcher callMatcher = CALL.matcher(text);
+        if (!callMatcher.find()) {
             throw new MongoCommandException("Unsupported command. " + ALLOWED);
         }
         String collection = callMatcher.group(1);
         String op = callMatcher.group(2);
-        List<String> args = splitTopLevelArgs(callMatcher.group(3).trim());
+        if (op.equalsIgnoreCase("mapReduce") || op.equalsIgnoreCase("eval")) {
+            throw new MongoCommandException("Operator not allowed in restricted console: " + op);
+        }
+        int end = closingParenthesis(text, callMatcher.end() - 1);
+        List<String> args = splitTopLevelArgs(text.substring(callMatcher.end(), end).trim());
+        String remaining = text.substring(end + 1).trim();
+        Integer limit = null;
+        Document sort = null;
+        while (!remaining.isEmpty()) {
+            Matcher modifier = MODIFIER.matcher(remaining);
+            if (!modifier.find()) {
+                throw new MongoCommandException("Unsupported cursor modifier: " + remaining);
+            }
+            String name = modifier.group(1);
+            int close = closingParenthesis(remaining, modifier.end() - 1);
+            String value = remaining.substring(modifier.end(), close).trim();
+            if (name.equals("sort")) {
+                if (!op.equals("find") || sort != null) {
+                    throw new MongoCommandException("sort is only supported once on find");
+                }
+                sort = parseJson(value, "sort");
+            } else {
+                if (!(op.equals("find") || op.equals("aggregate")) || limit != null) {
+                    throw new MongoCommandException("limit is only supported once on find or aggregate");
+                }
+                try {
+                    if (!value.matches("[0-9]+")) {
+                        throw new NumberFormatException();
+                    }
+                    limit = Integer.parseInt(value);
+                } catch (NumberFormatException e) {
+                    throw new MongoCommandException("Invalid limit: expected an integer from 0 to 2147483647");
+                }
+            }
+            remaining = remaining.substring(close + 1).trim();
+        }
 
         return switch (op) {
             case "find" -> buildFind(text, collection, args, sort, limit);
@@ -130,7 +136,17 @@ public class MongoCommandParser {
             throw new MongoCommandException("aggregate(pipeline) requires a pipeline array");
         }
         requireAtMost(args, 1, "aggregate(pipeline)");
-        return MongoCommand.aggregate(text, collection, parseDocumentArray(args.get(0), "pipeline"), limit);
+        List<Document> pipeline = parseDocumentArray(args.get(0), "pipeline");
+        if (pipeline.stream().anyMatch(stage -> stage == null)) {
+            throw new MongoCommandException("Invalid pipeline array: null stage");
+        }
+        if (limit != null && !pipeline.isEmpty()) {
+            Document last = pipeline.get(pipeline.size() - 1);
+            if (last.containsKey("$out") || last.containsKey("$merge")) {
+                throw new MongoCommandException("limit cannot follow a terminal $out or $merge stage");
+            }
+        }
+        return MongoCommand.aggregate(text, collection, pipeline, limit);
     }
 
     private MongoCommand buildInsert(String text, String collection, List<String> args, boolean many) {
@@ -184,54 +200,107 @@ public class MongoCommandParser {
         }
     }
 
-    /**
-     * Splits a call's argument list on commas that sit outside any brace,
-     * bracket or quoted string. An empty argument string yields an empty list.
-     */
+    /** Locate a call boundary without interpreting parentheses inside BSON strings. */
+    private int closingParenthesis(String text, int open) {
+        int depth = 0;
+        char quote = 0;
+        boolean escaped = false;
+        for (int i = open; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if (quote != 0) {
+                if (escaped) {
+                    escaped = false;
+                } else if (ch == '\\') {
+                    escaped = true;
+                } else if (ch == quote) {
+                    quote = 0;
+                }
+            } else if (ch == '"' || ch == '\'') {
+                quote = ch;
+            } else if (ch == '(') {
+                depth++;
+            } else if (ch == ')' && --depth == 0) {
+                return i;
+            }
+        }
+        throw new MongoCommandException("Unclosed command or string");
+    }
+
     private List<String> splitTopLevelArgs(String args) {
         List<String> parts = new ArrayList<>();
         if (args.isEmpty()) {
             return parts;
         }
-        int depth = 0;
+        List<Character> stack = new ArrayList<>();
         int start = 0;
-        boolean inString = false;
-        char stringChar = 0;
+        char quote = 0;
+        boolean escaped = false;
         for (int i = 0; i < args.length(); i++) {
             char ch = args.charAt(i);
-            if (inString) {
-                if (ch == stringChar && args.charAt(i - 1) != '\\') {
-                    inString = false;
+            if (quote != 0) {
+                if (escaped) {
+                    escaped = false;
+                } else if (ch == '\\') {
+                    escaped = true;
+                } else if (ch == quote) {
+                    quote = 0;
                 }
                 continue;
             }
             switch (ch) {
-                case '"', '\'' -> {
-                    inString = true;
-                    stringChar = ch;
+                case '"', '\'' -> quote = ch;
+                case '{', '[', '(' -> stack.add(ch);
+                case '}', ']', ')' -> {
+                    char expected = ch == '}' ? '{' : ch == ']' ? '[' : '(';
+                    if (stack.isEmpty() || stack.remove(stack.size() - 1) != expected) {
+                        throw new MongoCommandException("Unbalanced command arguments");
+                    }
                 }
-                case '{', '[' -> depth++;
-                case '}', ']' -> depth--;
                 case ',' -> {
-                    if (depth == 0) {
-                        parts.add(args.substring(start, i).trim());
+                    if (stack.isEmpty()) {
+                        addArgument(parts, args.substring(start, i));
                         start = i + 1;
                     }
                 }
-                default -> {
-                }
+                default -> { }
             }
         }
-        parts.add(args.substring(start).trim());
-        parts.removeIf(String::isEmpty);
+        if (quote != 0 || !stack.isEmpty()) {
+            throw new MongoCommandException("Unclosed command arguments");
+        }
+        addArgument(parts, args.substring(start));
         return parts;
+    }
+
+    private void addArgument(List<String> parts, String value) {
+        if (value.trim().isEmpty()) {
+            throw new MongoCommandException("Empty command argument");
+        }
+        parts.add(value.trim());
     }
 
     private Document parseJson(String json, String what) {
         try {
-            return Document.parse(json);
+            Document document = Document.parse(json);
+            rejectExecutableOperators(document);
+            return document;
         } catch (RuntimeException e) {
             throw new MongoCommandException("Invalid " + what + " document: " + e.getMessage());
+        }
+    }
+
+    private void rejectExecutableOperators(Object value) {
+        if (value instanceof java.util.Map<?, ?> map) {
+            for (var entry : map.entrySet()) {
+                if (java.util.Set.of("$where", "$function", "$accumulator").contains(entry.getKey())) {
+                    throw new MongoCommandException("Operator not allowed in restricted console: " + entry.getKey());
+                }
+                rejectExecutableOperators(entry.getValue());
+            }
+        } else if (value instanceof Iterable<?> values) {
+            for (Object child : values) {
+                rejectExecutableOperators(child);
+            }
         }
     }
 
@@ -243,6 +312,7 @@ public class MongoCommandParser {
         List<Document> list;
         try {
             Document wrapper = Document.parse("{\"__array__\": " + json + "}");
+            rejectExecutableOperators(wrapper);
             list = wrapper.getList("__array__", Document.class);
         } catch (RuntimeException e) {
             throw new MongoCommandException("Invalid " + what + " array: " + e.getMessage());

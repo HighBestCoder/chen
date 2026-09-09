@@ -4,6 +4,7 @@ import com.mongodb.client.AggregateIterable;
 import com.mongodb.client.FindIterable;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.MongoCursor;
 import com.mongodb.client.result.DeleteResult;
 import com.mongodb.client.result.InsertManyResult;
 import com.mongodb.client.result.UpdateResult;
@@ -62,7 +63,11 @@ public class MongoActuator {
         iterable = iterable.limit(effectiveLimit);
 
         List<Document> documents = new ArrayList<>();
-        iterable.forEach(documents::add);
+        try (MongoCursor<Document> cursor = iterable.iterator()) {
+            while (documents.size() < effectiveLimit && cursor.hasNext()) {
+                documents.add(cursor.next());
+            }
+        }
         long queryDone = System.currentTimeMillis();
 
         long total;
@@ -92,20 +97,34 @@ public class MongoActuator {
         MongoCollection<Document> collection = collectionOf(command);
 
         List<Document> pipeline = new ArrayList<>(command.getPipeline());
-        if (!hasLimitStage(pipeline)) {
+        boolean writesCollection = !pipeline.isEmpty()
+                && (pipeline.get(pipeline.size() - 1).containsKey("$out")
+                    || pipeline.get(pipeline.size() - 1).containsKey("$merge"));
+        if (!writesCollection && (command.getLimit() != null || !hasLimitStage(pipeline))) {
             pipeline.add(new Document(LIMIT_STAGE, resolveLimit(command.getLimit(), limit)));
         }
 
         AggregateIterable<Document> iterable = collection.aggregate(pipeline);
         List<Document> documents = new ArrayList<>();
-        iterable.forEach(documents::add);
+        boolean truncated;
+        // An earlier $limit does not bound the output of later $unwind/$unionWith.
+        // Bound retained results independently, without rewriting terminal writes.
+        int cap = limit < 0 ? EXPORT_MAX : MAX_LIMIT;
+        try (MongoCursor<Document> cursor = iterable.iterator()) {
+            while (documents.size() < cap && cursor.hasNext()) {
+                documents.add(cursor.next());
+            }
+            truncated = cursor.hasNext();
+        }
         long queryDone = System.currentTimeMillis();
 
         // An aggregation has no cheap total-count equivalent, so the result is
         // always reported as a complete (non-paged) set of what the pipeline
         // produced rather than inventing a page count.
-        return this.adapter.toResult(command.getRawText(), command.getCollection(), documents,
+        SQLQueryResult result = this.adapter.toResult(command.getRawText(), command.getCollection(), documents,
                 null, start, queryDone, documents.size(), false);
+        result.setTruncated(truncated);
+        return result;
     }
 
     private boolean hasLimitStage(List<Document> pipeline) {
@@ -119,7 +138,9 @@ public class MongoActuator {
 
     private int resolveLimit(Integer commandLimit, int consoleLimit) {
         if (commandLimit != null) {
-            return Math.min(commandLimit, MAX_LIMIT);
+            // Mongo limit(0) means unlimited, not zero rows. Never pass 0 to
+            // the driver on a GUI path that materializes its result in memory.
+            return commandLimit == 0 ? MAX_LIMIT : Math.min(commandLimit, MAX_LIMIT);
         }
         // consoleLimit < 0 is the DataView "export all" signal; cap it at
         // EXPORT_MAX rather than collapsing to DEFAULT_LIMIT so exports are

@@ -51,6 +51,9 @@ public class SQLExecutePlan {
 
     public void generateTargetSQL() throws SQLException {
         this.targetSQL = this.sourceSQL;
+        this.manualLimitDetected = false;
+        this.queryLimit = -1;
+        this.limitSource = null;
 
         if (this.sqlQueryParams == null) {
             return;

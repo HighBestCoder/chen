@@ -28,6 +28,9 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
+import org.springframework.beans.BeanUtils;
 
 @EqualsAndHashCode(callSuper = true)
 @Data
@@ -105,23 +108,31 @@ public class DataView extends SQLResult {
         this.data.getData().clear();
 
         this.getStateManager().getState().setTotal(result.getTotal());
-        this.getStateManager().getState().setSizeBytes(result.getStreamedSizeBytes());
+        this.getStateManager().getState().setSizeBytes(
+                "unavailable".equals(result.getSizeStatsStatus()) ? -1 : result.getStreamedSizeBytes());
 
 
-        this.data.setFields(result.getFields());
-
-        Map<String, Integer> fieldNumMap = new HashMap<>();
-
-        this.data.getFields().forEach(field -> {
-            if (fieldNumMap.containsKey(field.getName())) {
-                var fieldName = field.getName();
-                var num = fieldNumMap.get(field.getName());
-                field.setName(field.getName() + "(" + num + ")");
-                fieldNumMap.put(field.getName(), fieldNumMap.get(fieldName) + 1);
-            } else {
-                fieldNumMap.put(field.getName(), 1);
+        // Display keys must be unique, including aliases that already contain
+        // a suffix. Keep JDBC/audit metadata intact when generating UI names.
+        Set<String> reserved = new HashSet<>();
+        result.getFields().forEach(field -> reserved.add(field.getName()));
+        Set<String> used = new HashSet<>();
+        List<Field> displayFields = new ArrayList<>();
+        for (Field original : result.getFields()) {
+            Field field = new Field();
+            BeanUtils.copyProperties(original, field);
+            String name = original.getName();
+            if (used.contains(name)) {
+                int suffix = 1;
+                do {
+                    name = original.getName() + "(" + suffix++ + ")";
+                } while (reserved.contains(name) || used.contains(name));
             }
-        });
+            used.add(name);
+            field.setName(name);
+            displayFields.add(field);
+        }
+        this.data.setFields(displayFields);
 
 
         for (List<Object> row : result.getData()) {
@@ -164,27 +175,21 @@ public class DataView extends SQLResult {
         var session = SessionManager.getCurrentSession();
         ExportRequest exportRequest = ExportRequest.from(request);
         String scope = exportRequest.scope();
-
-
+        CommandRecord command = new CommandRecord(String.format("Export data: %s", this.title));
+        if (!session.canDownload()) {
+            command.setError("Export denied: no download permission for this asset");
+            session.recordCommand(command);
+            this.consoleLogger.warn("Export denied: no download permission for this asset");
+            return;
+        }
+        if (!List.of("current", "selected", "all").contains(scope)) {
+            throw new SQLException("Unknown export scope: " + scope);
+        }
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS");
         String timestamp = LocalDateTime.now().format(formatter);
         var f = session.createFile(String.format("data_%s_%d.csv", timestamp, System.nanoTime()));
 
-        CommandRecord command = new CommandRecord(String.format("Export data: %s", this.title));
-
-        BufferedWriter writer = null;
-        try {
-            if (!SessionManager.getCurrentSession().canDownload()) {
-                // 这里曾是一个纯静默的 return：不写文件、不记日志、控制台也没有
-                // 任何提示，排查时完全看不出「导出为什么没反应」。授权里缺
-                // download 动作就会走到这条分支。
-                log.warn("Export denied: user={} from={} view={} scope={} — asset permission has no download action",
-                        session.getUsername(), session.getRemoteAddr(), this.title, scope);
-                this.consoleLogger.warn("Export denied: no download permission for this asset");
-                session.getController().sendFile(f.getName());
-                return;
-            }
-            writer = Files.newBufferedWriter(f.toPath());
+        try (BufferedWriter writer = Files.newBufferedWriter(f.toPath())) {
             // UTF-8 BOM so Excel opens non-ASCII (e.g. CJK) CSV without mojibake.
             writer.write('\uFEFF');
 
@@ -213,11 +218,7 @@ public class DataView extends SQLResult {
                     public void begin(List<Field> fs) throws SQLException {
                         this.fields = fs;
                         try {
-                            for (Field field : fs) {
-                                w.write(field.getName());
-                                w.write(",");
-                            }
-                            w.newLine();
+                            writeMappedRows(w, fs, List.of());
                         } catch (IOException e) {
                             throw new SQLException(e);
                         }
@@ -238,22 +239,23 @@ public class DataView extends SQLResult {
             }
             writer.flush();
 
-            log.info("Export finished: user={} view={} scope={} file={} — {}",
-                    session.getUsername(), this.title, scope, f.getName(), command.getOutput());
-            this.consoleLogger.success(command.getOutput());
+        } catch (IOException | SQLException | RuntimeException e) {
+            command.setError(e.getMessage());
             session.recordCommand(command);
-
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        } finally {
-            if (writer != null) {
-                try {
-                    writer.close();
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
+            try {
+                Files.deleteIfExists(f.toPath());
+            } catch (IOException cleanup) {
+                e.addSuppressed(cleanup);
             }
+            if (e instanceof SQLException sqlException) {
+                throw sqlException;
+            }
+            throw new SQLException("Export failed: " + e.getMessage(), e);
         }
+        log.info("Export finished: user={} view={} scope={} file={} — {}",
+                session.getUsername(), this.title, scope, f.getName(), command.getOutput());
+        this.consoleLogger.success(command.getOutput());
+        session.recordCommand(command);
         session.getController().sendFile(f.getName());
     }
 
