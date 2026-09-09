@@ -63,7 +63,7 @@ public class JmsSessionService implements SessionService {
                 .addAllGateways(tokenResp.getData().getGatewaysList())
                 .build();
 
-        var resp = this.serviceBlockingStub.createForward(req);
+        var resp = this.serviceBlockingStub.withDeadlineAfter(15, java.util.concurrent.TimeUnit.SECONDS).createForward(req);
         if (!resp.getStatus().getOk()) {
             throw new IllegalStateException("Gateway connection failed");
         }
@@ -84,7 +84,7 @@ public class JmsSessionService implements SessionService {
                 .setId(session.getId())
                 .setDateEnd(Instant.now().getEpochSecond())
                 .build();
-        var resp = this.serviceBlockingStub.finishSession(req);
+        var resp = this.serviceBlockingStub.withDeadlineAfter(15, java.util.concurrent.TimeUnit.SECONDS).finishSession(req);
 
         if (!resp.getStatus().getOk()) {
             log.error("finish session failed: {}", resp.getStatus().getErr());
@@ -97,7 +97,7 @@ public class JmsSessionService implements SessionService {
                 .newBuilder()
                 .setToken(token)
                 .build();
-        var tokenResp = this.serviceBlockingStub.getTokenAuthInfo(tokenReq);
+        var tokenResp = this.serviceBlockingStub.withDeadlineAfter(15, java.util.concurrent.TimeUnit.SECONDS).getTokenAuthInfo(tokenReq);
         if (tokenResp.getStatus().getOk()) {
             return tokenResp;
         } else {
@@ -105,12 +105,24 @@ public class JmsSessionService implements SessionService {
         }
     }
 
+    private Common.Protocol selectedProtocol(ServiceOuterClass.TokenResponse response) {
+        var protocols = response.getData().getAsset().getProtocolsList();
+        var selected = response.getData().getPlatform().getProtocolsList().stream()
+                .map(p -> p.getSettingsMap().getOrDefault("selected_protocol", ""))
+                .filter(name -> !name.isBlank()).distinct().toList();
+        if (selected.isEmpty() && protocols.size() == 1) return protocols.get(0);
+        if (selected.size() != 1) throw new IllegalArgumentException("Missing or ambiguous selected database protocol");
+        var matches = protocols.stream().filter(p -> p.getName().equalsIgnoreCase(selected.get(0))).toList();
+        if (matches.size() != 1) throw new IllegalArgumentException("Selected database protocol is unavailable");
+        return matches.get(0);
+    }
+
     private Datasource createDatasource(ServiceOuterClass.TokenResponse tokenResp, String sessionId) {
         DBConnectInfo dbConnectInfo = new DBConnectInfo();
 
         dbConnectInfo.setHost(tokenResp.getData().getAsset().getAddress());
-        dbConnectInfo.setPort(tokenResp.getData().getAsset().getProtocols(0).getPort());
-        dbConnectInfo.setDbType(tokenResp.getData().getAsset().getProtocols(0).getName().toLowerCase());
+        dbConnectInfo.setPort(selectedProtocol(tokenResp).getPort());
+        dbConnectInfo.setDbType(selectedProtocol(tokenResp).getName().toLowerCase(Locale.ROOT));
         dbConnectInfo.setUser(tokenResp.getData().getAccount().getUsername());
         dbConnectInfo.setPassword(tokenResp.getData().getAccount().getSecret());
         dbConnectInfo.setDb(tokenResp.getData().getAsset().getSpecific().getDbName());
@@ -125,7 +137,13 @@ public class JmsSessionService implements SessionService {
                     AuditTag.build(sessionId, tokenResp.getData().getUser().getUsername()));
         }
 
-        var platformSettings = tokenResp.getData().getPlatform().getProtocols(0).getSettingsMap();
+        var platformSettings = tokenResp.getData().getPlatform().getProtocolsList().stream()
+                .filter(p -> p.getName().equalsIgnoreCase(dbConnectInfo.getDbType()))
+                .findFirst().orElseThrow(() -> new IllegalArgumentException("Selected protocol has no platform settings"))
+                .getSettingsMap();
+        for (String key : java.util.List.of("pg_ssl_mode", "token_expires_at")) {
+            if (platformSettings.containsKey(key)) dbConnectInfo.getOptions().put(key, platformSettings.get(key));
+        }
         var authSpec = ConnectionAuthSpec.fromSettings(platformSettings);
         var authFlowRoute = AuthFlowDispatcher.resolve(authSpec, dbConnectInfo.getDbType());
         this.applyAuthFlow(dbConnectInfo, authSpec, authFlowRoute);
@@ -140,8 +158,8 @@ public class JmsSessionService implements SessionService {
 
         var asset = tokenResp.getData().getAsset();
 
-        if (asset.getSpecific().getUseSsl()) {
-            dbConnectInfo.getOptions().put("useSSL", true);
+        if (asset.getSpecific().getUseSsl() || platformSettings.containsKey("pg_ssl_mode")) {
+            dbConnectInfo.getOptions().put("useSSL", asset.getSpecific().getUseSsl());
             dbConnectInfo.getOptions().put("verifyServerCertificate", !asset.getSpecific().getAllowInvalidCert());
             dbConnectInfo.getOptions().put("caCert", asset.getSpecific().getCaCert());
             dbConnectInfo.getOptions().put("clientCert", asset.getSpecific().getClientCert());
@@ -238,12 +256,12 @@ public class JmsSessionService implements SessionService {
                 .setAssetId(tokenResp.getData().getAsset().getId())
                 .setAsset(tokenResp.getData().getAsset().getName())
                 .setLoginFrom(Common.Session.LoginFrom.WT)
-                .setProtocol(tokenResp.getData().getAsset().getProtocols(0).getName())
+                .setProtocol(selectedProtocol(tokenResp).getName())
                 .setDateStart(System.currentTimeMillis() / 1000)
                 .setRemoteAddr(remoteAddr)
                 .build();
 
-        var sessionResp = this.serviceBlockingStub.createSession(
+        var sessionResp = this.serviceBlockingStub.withDeadlineAfter(15, java.util.concurrent.TimeUnit.SECONDS).createSession(
                 ServiceOuterClass.SessionCreateRequest
                         .newBuilder()
                         .setData(jmsSession)

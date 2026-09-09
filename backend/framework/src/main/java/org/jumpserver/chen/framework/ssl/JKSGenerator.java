@@ -105,14 +105,15 @@ public class JKSGenerator implements AutoCloseable {
 
         var caJKSFilePath = this.workDir.resolve("ca.jks");
         try (FileOutputStream fos = new FileOutputStream(caJKSFilePath.toFile())) {
-            var caCert = CertificateFactory
-                    .getInstance("X.509")
-                    .generateCertificate(new ByteArrayInputStream(this.caCert.getBytes()));
+            var certificates = CertificateFactory.getInstance("X.509")
+                    .generateCertificates(new ByteArrayInputStream(this.caCert.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 
             KeyStore caKeyStore = KeyStore.getInstance("JKS");
             caKeyStore.load(null, null);
 
-            caKeyStore.setCertificateEntry("ca", caCert);
+            if (certificates.isEmpty()) throw new IllegalArgumentException("Empty CA bundle");
+            int index=0;
+            for (var certificate:certificates) caKeyStore.setCertificateEntry("ca-"+index++, certificate);
             caKeyStore.store(fos, JSK_PASS.toCharArray());
         } catch (IOException | NoSuchAlgorithmException | CertificateException | KeyStoreException | RuntimeException e) {
             try { destroy(); } catch (RuntimeException cleanup) { e.addSuppressed(cleanup); }
@@ -139,8 +140,9 @@ public class JKSGenerator implements AutoCloseable {
         var clientJKSFilePath = this.workDir.resolve("client.jks");
         try (FileOutputStream fos = new FileOutputStream(clientJKSFilePath.toFile());
              PEMParser pemParser = new PEMParser(new StringReader(this.clientKey))) {
-            var clientCert = CertificateFactory.getInstance("X.509")
-                    .generateCertificate(new ByteArrayInputStream(this.clientCert.getBytes()));
+            var certificates = CertificateFactory.getInstance("X.509")
+                    .generateCertificates(new ByteArrayInputStream(this.clientCert.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            if (certificates.isEmpty()) throw new IllegalArgumentException("Empty client certificate chain");
 
             Object object = pemParser.readObject();
             JcaPEMKeyConverter converter = new JcaPEMKeyConverter().setProvider("BC");
@@ -160,11 +162,15 @@ public class JKSGenerator implements AutoCloseable {
 
 
             List<Certificate> certChain = new ArrayList<>();
-            certChain.add(clientCert);
+            certChain.addAll(certificates);
+            String algorithm = privateKey.getAlgorithm().equalsIgnoreCase("EC") ? "SHA256withECDSA" : "SHA256withRSA";
+            Signature proof=Signature.getInstance(algorithm);proof.initSign(privateKey);proof.update(new byte[]{1,2,3});byte[] signature=proof.sign();
+            proof.initVerify(certChain.get(0).getPublicKey());proof.update(new byte[]{1,2,3});
+            if (!proof.verify(signature)) throw new IllegalArgumentException("Client certificate does not match private key");
             clientKeyStore.setKeyEntry("client", privateKey, JSK_PASS.toCharArray(), certChain.toArray(new Certificate[0]));
 
             clientKeyStore.store(fos, JSK_PASS.toCharArray());
-        } catch (IOException | NoSuchAlgorithmException | CertificateException | KeyStoreException | RuntimeException e) {
+        } catch (IOException | NoSuchAlgorithmException | CertificateException | KeyStoreException | InvalidKeyException | SignatureException | RuntimeException e) {
             try { destroy(); } catch (RuntimeException cleanup) { e.addSuppressed(cleanup); }
             throw new RuntimeException(e);
         }

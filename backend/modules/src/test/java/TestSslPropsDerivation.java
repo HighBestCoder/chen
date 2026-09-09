@@ -67,15 +67,15 @@ public class TestSslPropsDerivation {
 
         Properties verifyNoCa = sslProps(new PostgresqlConnectionManager(
                 info(Map.of("useSSL", Boolean.TRUE, "verifyServerCertificate", Boolean.TRUE)), ds(DbType.postgresql)));
-        report("pg verify no-ca -> sslmode=verify-ca", "verify-ca".equals(verifyNoCa.getProperty("sslmode")), "verify-ca", verifyNoCa.getProperty("sslmode"));
-        report("pg verify no-ca -> DefaultJavaSSLFactory",
-                "org.postgresql.ssl.DefaultJavaSSLFactory".equals(verifyNoCa.getProperty("sslfactory")),
-                "DefaultJavaSSLFactory", verifyNoCa.getProperty("sslfactory"));
+        report("pg verify no-ca -> sslmode=verify-full", "verify-full".equals(verifyNoCa.getProperty("sslmode")), "verify-full", verifyNoCa.getProperty("sslmode"));
+        report("pg verify no-ca -> PemSslSocketFactory",
+                "org.jumpserver.chen.framework.ssl.PemSslSocketFactory".equals(verifyNoCa.getProperty("sslfactory")),
+                "PemSslSocketFactory", verifyNoCa.getProperty("sslfactory"));
 
         Properties verifyCa = sslProps(new PostgresqlConnectionManager(info(Map.of(
                 "useSSL", Boolean.TRUE, "verifyServerCertificate", Boolean.TRUE,
                 "caCert", "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----")), ds(DbType.postgresql)));
-        report("pg verify+ca -> sslmode=verify-ca", "verify-ca".equals(verifyCa.getProperty("sslmode")), "verify-ca", verifyCa.getProperty("sslmode"));
+        report("pg verify+ca -> sslmode=verify-full", "verify-full".equals(verifyCa.getProperty("sslmode")), "verify-full", verifyCa.getProperty("sslmode"));
         report("pg verify+ca -> sslrootcert set", verifyCa.getProperty("sslrootcert") != null, "set", verifyCa.getProperty("sslrootcert"));
         report("pg no-ssl drops MySQL useSSL", prefer.getProperty("useSSL") == null, "null", prefer.getProperty("useSSL"));
     }

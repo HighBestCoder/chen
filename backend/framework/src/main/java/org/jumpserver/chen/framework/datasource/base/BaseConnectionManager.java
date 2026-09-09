@@ -43,6 +43,7 @@ public abstract class BaseConnectionManager implements ConnectionManager {
 
     public synchronized void ping(String jdbcUrl, Properties props) throws SQLException {
         ensureOpen();
+        configureConnectionProperties(props);
         this.applyAuthProps(props);
         this.setSSLProps(props);
         this.applyAuditProps(props);
@@ -63,10 +64,33 @@ public abstract class BaseConnectionManager implements ConnectionManager {
      * semantics so existing connectors are bit-compatible.</p>
      */
     protected void applyAuthProps(Properties props) {
+        org.jumpserver.chen.framework.datasource.TokenGuardDriver.requireCurrent(connectInfo);
         props.setProperty("user", this.getConnectInfo().getUser());
         if (StringUtils.isNotBlank(this.getConnectInfo().getPassword())) {
             props.setProperty("password", this.getConnectInfo().getPassword());
         }
+    }
+
+    protected void configureConnectionProperties(Properties props) {
+        org.jumpserver.chen.framework.datasource.TokenGuardDriver.requireCurrent(connectInfo);
+        var internal = java.util.Set.of("caCert", "clientCert", "clientKey", "useSSL", "verifyServerCertificate", "authType", "authSource", "authFlowVersion", "authRoute", "scope", "relationalAuthDecision", "relationalAuthReason", "pg_ssl_mode", "token_expires_at");
+        connectInfo.getOptions().forEach((key,value) -> { if (value != null && !internal.contains(key)) props.setProperty(key, value.toString()); });
+        String type = connectInfo.getDbType() == null ? "" : connectInfo.getDbType();
+        switch (type) {
+            case "postgresql" -> { props.setProperty("connectTimeout", "5");props.setProperty("loginTimeout", "10");props.setProperty("socketTimeout", "7200"); }
+            case "mysql", "mariadb" -> { props.setProperty("connectTimeout", "5000");props.setProperty("socketTimeout", "7200000"); }
+            case "sqlserver" -> { props.setProperty("loginTimeout", "10");props.setProperty("socketTimeout", "7200000"); }
+        }
+        if (type.equals("mysql")) props.setProperty("socketFactory", "org.jumpserver.chen.modules.mysql.MysqlGatewaySocketFactory");
+        if (connectInfo.getProxyHost() != null && (type.equals("mysql") || type.equals("postgresql"))) {
+            String gateway = connectInfo.getProxyHost() + ":" + connectInfo.getProxyPort();
+            props.setProperty("chenGateway", gateway);
+            if (type.equals("postgresql")) props.setProperty("socketFactory", "org.jumpserver.chen.framework.ssl.GatewaySocketFactory");
+            else { props.setProperty("socketFactory", "org.jumpserver.chen.modules.mysql.MysqlGatewaySocketFactory"); }
+        }
+        boolean cert = StringUtils.isNotBlank((String)connectInfo.getOptions().get("clientCert"));
+        boolean key = StringUtils.isNotBlank((String)connectInfo.getOptions().get("clientKey"));
+        if (cert != key) throw new IllegalArgumentException("Client certificate and key must be supplied together");
     }
 
     protected synchronized JKSGenerator newJksGenerator() {
@@ -89,13 +113,15 @@ public abstract class BaseConnectionManager implements ConnectionManager {
             props.setProperty("useSSL", "true");
             props.setProperty("requireSSL", "true");
             var jksGenerator = newJksGenerator();
-            if ((boolean) this.getConnectInfo().getOptions().get("verifyServerCertificate")) {
+            if (!Boolean.FALSE.equals(this.getConnectInfo().getOptions().get("verifyServerCertificate"))) {
                 props.setProperty("verifyServerCertificate", "true");
+                if (StringUtils.isNotBlank((String) this.getConnectInfo().getOptions().get("caCert"))) {
                 jksGenerator.setCaCert((String) this.getConnectInfo().getOptions().get("caCert"));
 
                 var caCertPath = jksGenerator.generateCaJKS();
                 props.setProperty("trustCertificateKeyStoreUrl", "file:" + caCertPath);
                 props.setProperty("trustCertificateKeyStorePassword", JKSGenerator.JSK_PASS);
+                }
 
             }
             if (StringUtils.isNotBlank((String) this.getConnectInfo().getOptions().get("clientCert"))) {
@@ -229,18 +255,18 @@ public abstract class BaseConnectionManager implements ConnectionManager {
 
         try {
             var properties = new Properties();
+            configureConnectionProperties(properties);
             this.setSSLProps(properties);
-
-            this.connectInfo.getOptions().forEach((k, v) -> properties.setProperty(k, v.toString()));
 
             this.applyAuditProps(properties);
 
             ds.setConnectProperties(properties);
 
-            ds.setDriver(this.getDriver());
+            ds.setDriver(new org.jumpserver.chen.framework.datasource.TokenGuardDriver(this.getDriver(), connectInfo));
             ds.setUrl(this.getJDBCUrl(database));
             this.applyAuthOnDataSource(ds, properties);
 
+            ds.setMaxWait(15000);
             ds.setKeepAlive(true);
             ds.setFailFast(true);
             ds.setKillWhenSocketReadTimeout(false);

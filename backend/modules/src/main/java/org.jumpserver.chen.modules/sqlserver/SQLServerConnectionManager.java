@@ -107,6 +107,9 @@ public class SQLServerConnectionManager extends BaseConnectionManager {
         props.remove("trustCertificateKeyStoreUrl");
         props.remove("trustCertificateKeyStorePassword");
 
+        if (getConnectInfo().getProxyHost()!=null) props.setProperty("hostNameInCertificate", getConnectInfo().getHost());
+        if (StringUtils.isNotBlank((String)options.get("clientCert")))
+            throw new IllegalArgumentException("SQL Server TLS client certificates are not supported on this connection path; configure Entra certificates on the account");
         boolean useSSL = Boolean.TRUE.equals(options.get("useSSL"));
         if (!useSSL) {
             props.setProperty("encrypt", "false");
@@ -114,7 +117,7 @@ public class SQLServerConnectionManager extends BaseConnectionManager {
         }
 
         props.setProperty("encrypt", "true");
-        boolean verify = Boolean.TRUE.equals(options.get("verifyServerCertificate"));
+        boolean verify = !Boolean.FALSE.equals(options.get("verifyServerCertificate"));
         if (!verify) {
             props.setProperty("trustServerCertificate", "true");
             return;
