@@ -2,6 +2,22 @@ import { auth, getProfile } from '@/api/app'
 import { Message } from 'element-ui'
 import i18n from '@/i18n'
 
+const guards = {}
+function updateClipboardGuard(event, denied) {
+  if (guards[event]) {
+    document.removeEventListener(event, guards[event])
+    delete guards[event]
+  }
+  if (denied) {
+    guards[event] = (e) => {
+      Message.error(i18n.t(`msg.${event}_not_allowed`))
+      e.preventDefault()
+      if (navigator.clipboard) navigator.clipboard.writeText('').catch(() => {})
+    }
+    document.addEventListener(event, guards[event])
+  }
+}
+
 const state = {
   authenticated: false,
   token: '',
@@ -28,20 +44,8 @@ const mutations = {
   },
   PROFILE: (state, profile) => {
     state.profile = profile
-    if (!profile.canCopy) {
-      document.addEventListener('copy', (e) => {
-        Message.error(i18n.t('msg.copy_not_allowed'))
-        e.preventDefault()
-        navigator.clipboard.writeText('').then(r => {})
-      })
-    }
-    if (!profile.canPaste) {
-      document.addEventListener('paste', (e) => {
-        Message.error(i18n.t('msg.copy_not_allowed'))
-        e.preventDefault()
-        navigator.clipboard.writeText('').then(r => {})
-      })
-    }
+    updateClipboardGuard('copy', !profile.canCopy)
+    updateClipboardGuard('paste', !profile.canPaste)
   }
 }
 

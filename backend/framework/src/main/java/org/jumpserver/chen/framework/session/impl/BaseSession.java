@@ -56,6 +56,7 @@ public class BaseSession implements Session {
     private Controller controller;
 
     private boolean enableAutoComplete = true;
+    private final java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
 
 
     public BaseSession(Datasource datasource, String remoteAddr) {
@@ -167,25 +168,51 @@ public class BaseSession implements Session {
     }
 
     @Override
-    public void activeSession(PacketIO packetIO) {
+    public synchronized void activeSession(PacketIO packetIO) {
+        if (closed.get()) throw new IllegalStateException("Session is closed");
         this.setPacketIO(packetIO);
         this.controller = new BaseController(this.packetIO);
+        SessionManager.markActive(this.webToken);
     }
 
     @Override
     public boolean isActive() {
-        return this.getPacketIO() != null && this.getPacketIO().getWsSession().isOpen();
+        return !closed.get() && this.getPacketIO() != null && this.getPacketIO().getWsSession().isOpen();
+    }
+
+    protected synchronized boolean beginClose() {
+        if (!closed.compareAndSet(false, true)) return false;
+        SessionManager.unregisterSession(this.getWebToken());
+        return true;
+    }
+
+    protected boolean isClosed() { return closed.get(); }
+
+    protected void cleanup(String operation, Runnable action) {
+        try { action.run(); }
+        catch (Exception e) { log.error("Session cleanup failed: {}", operation, e); }
+    }
+
+    protected void closeResources() {
+        for (var console : consoles.values()) cleanup("console", console::close);
+        consoles.clear();
+        cleanup("datasource", () -> { if (datasource != null) datasource.close(); });
+        cleanup("socket", () -> { if (packetIO != null) packetIO.close(); });
+        if (webToken != null) cleanup("temporary files", () -> {
+            var path = getTempPath();
+            try (var files = java.nio.file.Files.walk(path)) {
+                for (var file : files.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                    java.nio.file.Files.deleteIfExists(file);
+                }
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        });
     }
 
     @Override
     public void close() {
-        SessionManager.unregisterSession(this.getWebToken());
-        this.getDatasource().close();
-        this.getPacketIO().close();
-        var path = this.getTempPath();
-        if (path.toFile().exists()) {
-            path.toFile().delete();
-        }
+        if (beginClose()) closeResources();
     }
 
     @Override
