@@ -109,6 +109,11 @@ public class ConsoleWebSocketHandler extends TextWebSocketHandler {
         try {
             var session = SessionManager.getCurrentSession();
             if (!socket.isOpen() || session == null || !session.isActive()) return;
+            if (!cancel && session instanceof org.jumpserver.chen.framework.session.impl.JMSSession jms && !jms.allowsExecution()) {
+                new org.jumpserver.chen.framework.ws.io.PacketIO(socket).sendPacket("message",
+                        org.jumpserver.chen.framework.console.entity.response.Message.error("Operation denied", "Session locked or expired"));
+                return;
+            }
             if (Packet.TYPE_CONNECT.equals(packet.getType())) {
                 onConnectPacket(socket, packet);
             } else {

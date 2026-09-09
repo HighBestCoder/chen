@@ -28,6 +28,8 @@ public class SQLExecutePlan {
     private String targetSQL;
     private final DbType druidDbType;
     private Statement statement;
+    private java.util.List<Object> parameters = java.util.List.of();
+    private String quotedPreviewTable;
     private Connection connection;
     private ACLResult aclResult;
 
@@ -84,6 +86,20 @@ public class SQLExecutePlan {
             return;
         }
 
+        if (quotedPreviewTable != null) {
+            // Druid corrupts embedded identifier delimiters when rendering ASTs.
+            // Only parse our fixed preview template; insert the already quoted
+            // table after rewriting, so neither names nor values become SQL syntax.
+            if (sqlQueryParams.getOffset() < 0) throw new SQLException(MessageUtils.get("msg.error.already_first_page"));
+            this.queryLimit = sqlQueryParams.getLimit();
+            this.limitSource = sqlQueryParams.getLimitSource() != null ? sqlQueryParams.getLimitSource() : "toolbar";
+            this.targetSQL = PageUtils.limit("SELECT * FROM __chen_preview_table__", druidDbType,
+                    sqlQueryParams.getOffset(), sqlQueryParams.getLimit()).replace("__chen_preview_table__", quotedPreviewTable);
+            int total = sqlActuator.count(this);
+            if (total > 0 && sqlQueryParams.getOffset() >= total) throw new SQLException(MessageUtils.get("msg.error.already_last_page"));
+            return;
+        }
+
         if (this.getTargetSQLStatement() instanceof SQLSelectStatement selectStatement) {
             int manualLimit = PageUtils.getLimit(this.targetSQL, this.druidDbType);
             if (manualLimit > -1) {
@@ -125,7 +141,14 @@ public class SQLExecutePlan {
 
     public Statement createStatement() throws SQLException {
         if (this.statement == null || this.statement.isClosed()) {
-            this.statement = this.connection.createStatement();
+            if (parameters.isEmpty()) this.statement = this.connection.createStatement();
+            else {
+                var prepared = this.connection.prepareStatement(this.targetSQL);
+                this.statement = prepared;
+                try {
+                    for (int i = 0; i < parameters.size(); i++) prepared.setObject(i + 1, parameters.get(i));
+                } catch (SQLException failure) { prepared.close(); throw failure; }
+            }
         }
         return this.statement;
     }

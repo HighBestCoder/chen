@@ -1,6 +1,7 @@
 import com.alibaba.druid.DbType;
 import com.alibaba.druid.sql.SQLUtils;
 import org.jumpserver.chen.framework.console.QueryConsole;
+import org.jumpserver.chen.framework.console.DataViewConsole;
 import org.jumpserver.chen.framework.console.dataview.DataView;
 import org.jumpserver.chen.framework.console.state.*;
 import org.jumpserver.chen.framework.datasource.*;
@@ -29,7 +30,15 @@ public class TestQueryConsoleSecurity {
         List<String> failures=new ArrayList<>();
         Path dir=Files.createTempDirectory("sql-security-");
         Session session=proxy(Session.class,(p,m,v)->switch(m.getName()) {
-            case "getConsoles" -> Map.of(); case "checkACL" -> { calls[0]++; yield approval[0]; }
+            case "getConsoles" -> Map.of();
+            case "checkACLBatch" -> {
+                calls[0]++;
+                if (((List<String>)v[1]).stream().anyMatch(text -> text.startsWith("DROP"))) {
+                    ACLResult denied=new ACLResult();denied.setRiskLevel(Common.RiskLevel.Reject);yield denied;
+                }
+                yield approval[0];
+            }
+            case "checkACL" -> { calls[0]++; yield approval[0]; }
             case "recordCommand" -> { records.add((CommandRecord)v[0]); yield null; }
             case "canDownload" -> true;
             case "getController" -> proxy(org.jumpserver.chen.framework.session.controller.Controller.class,(x,y,z)->null);
@@ -43,7 +52,7 @@ public class TestQueryConsoleSecurity {
             case "withConnection" -> actuator[0];
             case "parseSQL" -> SQLUtils.parseStatements(((SQL)v[0]).getSql(),DbType.mysql).stream().map(Object::toString).toList();
             case "createPlan" -> {
-                SQLExecutePlan plan=new SQLExecutePlan(((SQL)v[0]).getSql(),DbType.mysql);
+                SQLExecutePlan plan=new SQLExecutePlan(v[0] instanceof SQL sql ? sql.getSql() : "SELECT * FROM fixture",DbType.mysql);
                 plan.setConnection(conn); plan.setSqlActuator(actuator[0]); yield plan;
             }
             case "count" -> { calls[1]++; yield 100; }
@@ -101,6 +110,23 @@ public class TestQueryConsoleSecurity {
             view.refresh();
             if(calls[2]!=exec+1 || state.isCanCancel()) failures.add("allowed refresh failed or stale cancel state");
             if(!"renewed-approval".equals(records.get(records.size()-1).getTicketId())) failures.add("renewed approval not applied to execution audit");
+            approval[0]=null;
+            int beforeBatch=calls[2],beforeCount=calls[1];
+            console.onSQL("SELECT 1; DROP TABLE fixture");
+            if(calls[2]!=beforeBatch || calls[1]!=beforeCount)failures.add("multi-statement ACL denial allowed earlier or later statement side effects");
+            var preview=new DataViewConsole(ds,ws,"test");
+            Field previewState=DataViewConsole.class.getDeclaredField("stateManager");previewState.setAccessible(true);
+            previewState.set(preview,new StateManager<>(new State("preview"),new PacketIO(ws)));
+            preview.createDataView("schema","fixture");
+            Field previewView=DataViewConsole.class.getDeclaredField("tableDataView");previewView.setAccessible(true);
+            var tableView=(DataView)previewView.get(preview);
+            for(var risk:List.of(Common.RiskLevel.ReviewAccept,Common.RiskLevel.ReviewCancel)) {
+                ACLResult wrong=new ACLResult();wrong.setRiskLevel(risk);
+                wrong.setApprovedCommandHash(ACLFilterImpl.commandHash("SELECT * FROM different_table"));approval[0]=wrong;
+                int beforePreview=calls[2],countPreview=calls[1];
+                try{tableView.loadData();failures.add("preview accepted mismatched/cancelled approval");}catch(SQLException expected){}
+                if(calls[2]!=beforePreview || calls[1]!=countPreview)failures.add("preview performed DB work before approval binding");
+            }
             require(failures.isEmpty(),String.join("; ",failures));
             System.out.println("OK: parser audit, single initial execution, refresh/paging/export recheck before count, approval hash binding");
         } finally {

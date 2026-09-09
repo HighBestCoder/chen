@@ -125,28 +125,30 @@ public class DataViewConsole extends AbstractConsole {
                     .getConnectionManager()
                     .getSqlActuator()
                     .createPlan(schemaName, tableName, null);
-            var sql = plan.getTargetSQL();
-            var aclResult = session.checkACL(sql);
-            if (aclResult != null && (aclResult.getRiskLevel() == Common.RiskLevel.Reject || aclResult.getRiskLevel() == Common.RiskLevel.ReviewReject)) {
-                this.getConsoleLogger().error("%s", MessageUtils.get("msg.error.acl_reject"));
-                CommandRecord commandRecord = new CommandRecord(sql);
-                commandRecord.applyACL(aclResult);
-                session.recordCommand(commandRecord);
+            try {
+                var sql = plan.getTargetSQL();
+                var aclResult = session.checkACL(sql);
+                if (aclResult != null && !aclResult.allows(sql)) {
+                    this.getConsoleLogger().error("%s", aclResult.denialMessage());
+                    CommandRecord commandRecord = new CommandRecord(sql);
+                    commandRecord.applyACL(aclResult);
+                    session.recordCommand(commandRecord);
 
-                this.stateManager.getState().setLoading(false);
-                this.stateManager.commit();
-                throw new SQLException(MessageUtils.get("msg.error.acl_reject"));
-            }
-            plan.setSqlQueryParams(sqlQueryParams);
-            plan.setRowConsumer(sink);
-            plan.generateTargetSQL();
+                    this.stateManager.getState().setLoading(false);
+                    this.stateManager.commit();
+                    throw new SQLException(aclResult.denialMessage());
+                }
+                plan.setSqlQueryParams(sqlQueryParams);
+                plan.setRowConsumer(sink);
+                plan.generateTargetSQL();
 
-            plan.setAclResult(aclResult);
-            this.getConsoleLogger().info("execute sql: %s", plan.getTargetSQL());
-            var result = plan.executeWithAudit();
+                plan.setAclResult(aclResult);
+                this.getConsoleLogger().info("execute sql: %s", plan.getTargetSQL());
+                var result = plan.executeWithAudit();
 
-            this.getConsoleLogger().success(result);
-            return result;
+                this.getConsoleLogger().success(result);
+                return result;
+            } finally { plan.close(); }
         });
 
         this.tableDataView = dataView;

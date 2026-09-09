@@ -81,6 +81,10 @@ public interface Session {
 
     ACLResult checkACL(String command, Connection connection);
 
+    default ACLResult checkACLBatch(String command, java.util.List<String> statements, Connection connection) {
+        return checkACL(command, connection);
+    }
+
     boolean enableAutoComplete();
 
     void setEnableAutoComplete(boolean enableAutoComplete);

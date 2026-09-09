@@ -134,12 +134,10 @@ public class MongoQueryConsole extends AbstractConsole {
                     session.getUsername(), aclResult.getRiskLevel(), aclResult.getRiskAction(),
                     aclResult.getCmdAclId(), aclResult.getCmdGroupId(), aclResult.getTicketId());
         }
-        if (aclResult != null
-                && (aclResult.getRiskLevel() == Common.RiskLevel.Reject
-                || aclResult.getRiskLevel() == Common.RiskLevel.ReviewReject)) {
+        if (aclResult != null && !aclResult.allows(commandText)) {
             log.warn("Mongo command rejected by ACL: user={} riskLevel={} aclId={} command={}",
                     session.getUsername(), aclResult.getRiskLevel(), aclResult.getCmdAclId(), commandText);
-            this.getConsoleLogger().error("Command rejected by ACL");
+            this.getConsoleLogger().error(aclResult.denialMessage());
             CommandRecord rejected = new CommandRecord(commandText);
             rejected.applyACL(aclResult);
             rejected.setError("Command rejected by ACL");
@@ -149,22 +147,6 @@ public class MongoQueryConsole extends AbstractConsole {
             session.recordCommand(rejected);
             return;
         }
-        if (aclResult != null && aclResult.getApprovedCommandHash() != null
-                && !aclResult.getApprovedCommandHash().equals(ACLFilterImpl.commandHash(commandText))) {
-            log.warn("Mongo approved-command hash mismatch: user={} ticket={} approved={} actual={}",
-                    session.getUsername(), aclResult.getTicketId(), aclResult.getApprovedCommandHash(),
-                    ACLFilterImpl.commandHash(commandText));
-            this.getConsoleLogger().error("Approved command hash mismatch");
-            CommandRecord rejected = new CommandRecord(commandText);
-            rejected.applyACL(aclResult);
-            rejected.setError("approved command hash mismatch");
-            rejected.setExecutionStats(
-                    MongoExecutionStatsBuilder.fromFailure(this.connectionManager, commandText,
-                            new MongoCommandException("approved command hash mismatch")));
-            session.recordCommand(rejected);
-            return;
-        }
-
         final MongoCommand command;
         try {
             command = this.parser.parse(commandText);

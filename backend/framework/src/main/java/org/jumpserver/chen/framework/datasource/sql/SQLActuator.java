@@ -17,6 +17,11 @@ public interface SQLActuator {
 
     <T> List<T> getObjects(String sql, Class<T> clazz, Map<String, Integer> fieldMapping) throws SQLException;
 
+    default <T> List<T> getObjects(SQL sql, Class<T> clazz, Map<String, Integer> fieldMapping) throws SQLException {
+        if (!sql.getParameters().isEmpty()) throw new SQLException("Bound metadata queries unsupported");
+        return getObjects(sql.getSql(), clazz, fieldMapping);
+    }
+
     int count(SQL sql) throws SQLException;
 
     int count(SQLExecutePlan plan) throws SQLException;
