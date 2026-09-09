@@ -123,7 +123,8 @@ public class SQLServerConnectionManager extends BaseConnectionManager {
         props.setProperty("trustServerCertificate", "false");
         String caCert = (String) options.get("caCert");
         if (StringUtils.isNotBlank(caCert)) {
-            var jks = new JKSGenerator(caCert);
+            var jks = newJksGenerator();
+            jks.setCaCert(caCert);
             props.setProperty("trustStore", jks.generateCaJKS().toString());
             props.setProperty("trustStorePassword", JKSGenerator.JSK_PASS);
         }

@@ -36,6 +36,7 @@ public class MongoConnectionManager implements ConnectionManager {
     private final SQLActuator sqlActuatorStub;
 
     private MongoClient client;
+    private boolean closed;
     private String databaseContext;
 
     public MongoConnectionManager(DBConnectInfo connectInfo, Datasource datasource) {
@@ -46,6 +47,7 @@ public class MongoConnectionManager implements ConnectionManager {
     }
 
     private synchronized MongoClient client() {
+        if (closed) throw new IllegalStateException("Mongo connection manager is closed");
         if (this.client == null) {
             this.client = MongoClients.create(buildSettings());
         }
@@ -196,10 +198,11 @@ public class MongoConnectionManager implements ConnectionManager {
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
+        if (closed) return;
+        closed = true;
         if (this.client != null) {
-            this.client.close();
-            this.client = null;
+            try { this.client.close(); } finally { this.client = null; }
         }
     }
 
