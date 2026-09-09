@@ -11,7 +11,8 @@ public class DriverClassLoader extends URLClassLoader {
     private final String jarName;
 
     public DriverClassLoader(String jarName, URL url) {
-        super(new URL[]{url});
+        // The application loader owns custom TLS/socket factories in a Boot executable jar.
+        super(new URL[]{url}, DriverClassLoader.class.getClassLoader());
         this.jarName = jarName;
     }
 
