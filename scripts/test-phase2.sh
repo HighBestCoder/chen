@@ -12,6 +12,7 @@ tests=(
   TestQueryLimitBehavior TestSqlServerTop TestSqlPermissionErrorClassifier
   TestColumnSizeKeyResolver TestStreamingStatsBuilder TestStreamingSizeParity
   TestTlsResourceCleanup TestConnectionManagerLifecycle
+  TestDriverLoading
   TestConnectionAuthBoundaries TestConnectionCreationCleanup TestConnectionConfiguration TestConnectionConfigurationBaseline
   TestSessionBoundaries TestConsoleOrdering TestSessionLifetime TestSessionHttpIntegration TestSessionTaskReconnect
   TestAuditTag TestSqlScriptParserAndValidator
