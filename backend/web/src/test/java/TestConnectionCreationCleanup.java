@@ -17,9 +17,14 @@ public class TestConnectionCreationCleanup {
         @Override public void close() { closed++; super.close(); }
     }
     static class Core extends ServiceGrpc.ServiceImplBase {
-        String mode; int created, finished, forwardsDeleted; List<String> ids = new ArrayList<>();
+        String mode; int created, finished, forwardsDeleted; boolean deadlineMissing; List<String> ids = new ArrayList<>();
+        void checkDeadline() {
+            var deadline=Context.current().getDeadline();
+            if(deadline==null || deadline.timeRemaining(java.util.concurrent.TimeUnit.SECONDS)>15)deadlineMissing=true;
+        }
         static <T> void reply(StreamObserver<T> out, T value) { out.onNext(value); out.onCompleted(); }
         @Override public void getTokenAuthInfo(ServiceOuterClass.TokenRequest request, StreamObserver<ServiceOuterClass.TokenResponse> out) {
+            checkDeadline();
             var asset = Common.Asset.newBuilder().setAddress("fixture-host")
                     .addProtocols(Common.Protocol.newBuilder().setName(mode.equals("datasource") ? "missing-driver" : "fixture").setPort(5432));
             var data = Common.TokenAuthInfo.newBuilder().setAsset(asset)
@@ -28,22 +33,27 @@ public class TestConnectionCreationCleanup {
             reply(out, ServiceOuterClass.TokenResponse.newBuilder().setStatus(OK).setData(data).build());
         }
         @Override public void createSession(ServiceOuterClass.SessionCreateRequest req, StreamObserver<ServiceOuterClass.SessionCreateResponse> out) {
+            checkDeadline();
             created++; reply(out, ServiceOuterClass.SessionCreateResponse.newBuilder().setStatus(OK).setData(req.getData().toBuilder().setId("fixture-"+created)).build());
         }
         @Override public void finishSession(ServiceOuterClass.SessionFinishRequest req, StreamObserver<ServiceOuterClass.SessionFinishResp> out) {
+            checkDeadline();
             finished++; ids.add(req.getId()); reply(out, ServiceOuterClass.SessionFinishResp.newBuilder().setStatus(OK).build());
         }
         @Override public void createForward(ServiceOuterClass.ForwardRequest req, StreamObserver<ServiceOuterClass.ForwardResponse> out) {
+            checkDeadline();
             if (mode.equals("transport")) out.onError(Status.UNAVAILABLE.withDescription("injected transport failure").asRuntimeException());
             else if (mode.equals("invalid-port") || mode.equals("success")) {
                 reply(out, ServiceOuterClass.ForwardResponse.newBuilder().setStatus(OK).setId("fixture-forward").setPort(mode.equals("success") ? 15432 : 0).build());
             } else reply(out, ServiceOuterClass.ForwardResponse.newBuilder().setStatus(ServiceOuterClass.Status.newBuilder().setOk(false).setErr("injected gateway rejection")).build());
         }
         @Override public void deleteForward(ServiceOuterClass.ForwardDeleteRequest req, StreamObserver<ServiceOuterClass.StatusResponse> out) {
+            checkDeadline();
             if (!req.getId().equals("fixture-forward")) throw new AssertionError("wrong forward closed");
             forwardsDeleted++; reply(out, ServiceOuterClass.StatusResponse.newBuilder().setStatus(OK).build());
         }
         @Override public void recordSessionLifecycleLog(ServiceOuterClass.SessionLifecycleLogRequest req, StreamObserver<ServiceOuterClass.StatusResponse> out) {
+            checkDeadline();
             reply(out, ServiceOuterClass.StatusResponse.newBuilder().setStatus(OK).build());
         }
     }
@@ -69,6 +79,7 @@ public class TestConnectionCreationCleanup {
             var session = service.createNewSession("fixture-token", "127.0.0.1");
             if (core.finished != 4 || core.created != 5 || session.getDatasource().getConnectInfo().getProxyPort() != 15432) failures++;
             session.close(); session.close();
+            if (core.deadlineMissing) failures++;
             if (core.finished != 5 || core.forwardsDeleted != 2 || FixtureDatasource.closed != 4) failures++;
         } finally { factories.remove("fixture"); channel.shutdownNow(); server.shutdownNow(); }
         if (failures != 0) throw new AssertionError(failures+" creation cleanup failures; created="+core.created+" finished="+core.finished+" datasourceClosed="+FixtureDatasource.closed);

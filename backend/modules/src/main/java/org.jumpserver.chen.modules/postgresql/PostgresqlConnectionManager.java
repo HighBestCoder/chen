@@ -40,24 +40,23 @@ public class PostgresqlConnectionManager extends BaseConnectionManager {
         props.remove("trustCertificateKeyStorePassword");
 
         boolean useSSL = Boolean.TRUE.equals(options.get("useSSL"));
-        if (!useSSL) {
-            props.setProperty("sslmode", "prefer");
-            return;
+        boolean verify = !Boolean.FALSE.equals(options.get("verifyServerCertificate"));
+        String mode = (String) options.getOrDefault("pg_ssl_mode", "prefer");
+        if (useSSL) mode = verify ? "verify-full" : "require";
+        if (!java.util.Set.of("disable","allow","prefer","require","verify-ca","verify-full").contains(mode))
+            throw new IllegalArgumentException("Invalid PostgreSQL SSL mode");
+        props.setProperty("sslmode", mode);
+        if (mode.equals("verify-ca") || mode.equals("verify-full")) {
+            props.setProperty("sslfactory", "org.jumpserver.chen.framework.ssl.PemSslSocketFactory");
+            String caCert = (String) options.get("caCert");
+            if (StringUtils.isNotBlank(caCert)) props.setProperty("sslrootcert", writePemTempFile(caCert).toString());
         }
-
-        boolean verify = Boolean.TRUE.equals(options.get("verifyServerCertificate"));
-        if (!verify) {
-            props.setProperty("sslmode", "require");
-            return;
-        }
-
-        props.setProperty("ssl", "true");
-        props.setProperty("sslmode", "verify-ca");
-        String caCert = (String) options.get("caCert");
-        if (StringUtils.isNotBlank(caCert)) {
-            props.setProperty("sslrootcert", writePemTempFile(caCert).toString());
-        } else {
-            props.setProperty("sslfactory", "org.postgresql.ssl.DefaultJavaSSLFactory");
+        if (StringUtils.isNotBlank((String) options.get("clientCert"))) {
+            var generator = newJksGenerator();
+            generator.setClientCert((String) options.get("clientCert")); generator.setClientKey((String) options.get("clientKey"));
+            props.setProperty("chenClientKeyStore", generator.generateClientJKS().toString());
+            props.setProperty("sslfactory", "org.jumpserver.chen.framework.ssl.PemSslSocketFactory");
+            if (!mode.startsWith("verify-")) props.setProperty("chenTrustAll", "true");
         }
     }
 

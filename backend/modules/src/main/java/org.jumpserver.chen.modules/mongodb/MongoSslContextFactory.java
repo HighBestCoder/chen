@@ -71,7 +71,9 @@ final class MongoSslContextFactory {
     }
 
     private static KeyManager[] buildKeyManagers(String clientCert, String clientKey) throws Exception {
-        if (StringUtils.isBlank(clientCert) || StringUtils.isBlank(clientKey)) {
+        if (StringUtils.isBlank(clientCert) != StringUtils.isBlank(clientKey))
+            throw new IllegalArgumentException("Client certificate and key must be supplied together");
+        if (StringUtils.isBlank(clientCert)) {
             return null;
         }
         JKSGenerator generator = new JKSGenerator();

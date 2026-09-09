@@ -175,7 +175,7 @@ public class JMSSession extends BaseSession {
                 .setEvent(eventType)
                 .setReason(reason)
                 .build();
-        var resp = this.serviceBlockingStub.recordSessionLifecycleLog(req);
+        var resp = this.serviceBlockingStub.withDeadlineAfter(15, java.util.concurrent.TimeUnit.SECONDS).recordSessionLifecycleLog(req);
         if (!resp.getStatus().getOk()) {
             log.error("recordLifecycle error: {}", resp.getStatus().getErr());
         }
@@ -255,7 +255,7 @@ public class JMSSession extends BaseSession {
                 .setId(this.jmsSession.getId())
                 .setDateEnd(Instant.now().getEpochSecond())
                 .build();
-        var resp = this.serviceBlockingStub.finishSession(req);
+        var resp = this.serviceBlockingStub.withDeadlineAfter(15, java.util.concurrent.TimeUnit.SECONDS).finishSession(req);
         if (!resp.getStatus().getOk()) {
             throw new SessionException(this.getUsername(), resp.getStatus().getErr());
         }
@@ -271,7 +271,7 @@ public class JMSSession extends BaseSession {
                 .newBuilder()
                 .setId(this.gatewayId)
                 .build();
-        var resp = this.serviceBlockingStub.deleteForward(req);
+        var resp = this.serviceBlockingStub.withDeadlineAfter(15, java.util.concurrent.TimeUnit.SECONDS).deleteForward(req);
         if (!resp.getStatus().getOk()) {
             log.error("close gateway error: {}", resp.getStatus().getErr());
         }

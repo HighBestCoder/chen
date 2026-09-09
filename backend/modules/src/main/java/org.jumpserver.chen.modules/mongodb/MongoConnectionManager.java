@@ -2,7 +2,6 @@ package org.jumpserver.chen.modules.mongodb;
 
 import lombok.extern.slf4j.Slf4j;
 
-import com.mongodb.ConnectionString;
 import com.mongodb.MongoClientSettings;
 import com.mongodb.MongoCredential;
 import com.mongodb.client.MongoClient;
@@ -14,8 +13,6 @@ import org.jumpserver.chen.framework.datasource.Datasource;
 import org.jumpserver.chen.framework.datasource.entity.DBConnectInfo;
 import org.jumpserver.chen.framework.datasource.sql.SQLActuator;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.List;
@@ -56,38 +53,29 @@ public class MongoConnectionManager implements ConnectionManager {
 
     private MongoClientSettings buildSettings() {
         boolean oidc = MongoEntraAuthSupport.isOidcMode(this.connectInfo);
-        String host = this.connectInfo.getProxyHost() != null
-                ? this.connectInfo.getProxyHost() : this.connectInfo.getHost();
-        Integer port = this.connectInfo.getProxyPort() != null
-                ? this.connectInfo.getProxyPort() : this.connectInfo.getPort();
-        StringBuilder uri = new StringBuilder("mongodb://");
-        // Entra OIDC authenticates against $external via the driver
-        // callback; user / password must NOT appear in the URI, and the
-        // SCRAM ?authSource=<db> must be omitted or the server falls back
-        // to SCRAM and rejects the bearer token.
-        if (!oidc) {
-            String user = this.connectInfo.getUser();
-            String password = this.connectInfo.getPassword();
-            if (user != null && !user.isEmpty()) {
-                uri.append(URLEncoder.encode(user, StandardCharsets.UTF_8));
-                if (password != null && !password.isEmpty()) {
-                    uri.append(':').append(URLEncoder.encode(password, StandardCharsets.UTF_8));
-                }
-                uri.append('@');
-            }
-        }
-        uri.append(host).append(':').append(port).append('/');
-        if (!oidc) {
-            String authSource = this.connectInfo.getDb();
-            if (authSource != null && !authSource.isEmpty()) {
-                uri.append("?authSource=").append(URLEncoder.encode(authSource, StandardCharsets.UTF_8));
-            }
-        }
+        String host = this.connectInfo.getHost();
+        Integer port = this.connectInfo.getProxyPort() != null ? this.connectInfo.getProxyPort() : this.connectInfo.getPort();
+        if (host == null || host.isBlank() || port == null || port < 1 || port > 65535)
+            throw new IllegalArgumentException("Invalid Mongo host or port");
         MongoClientSettings.Builder builder = MongoClientSettings.builder()
-                .applyConnectionString(new ConnectionString(uri.toString()));
+                .applyToClusterSettings(cluster -> cluster.hosts(java.util.List.of(new com.mongodb.ServerAddress(host, port))))
+                .applyToSocketSettings(socket -> socket.connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS).readTimeout(120, java.util.concurrent.TimeUnit.MINUTES))
+                .applyToClusterSettings(cluster -> cluster.serverSelectionTimeout(10, java.util.concurrent.TimeUnit.SECONDS));
+        if (this.connectInfo.getProxyHost() != null) {
+            String proxy = this.connectInfo.getProxyHost();
+            builder.inetAddressResolver(name -> java.util.List.of(java.net.InetAddress.getByAddress(name, java.net.InetAddress.getByName(proxy).getAddress())));
+            builder.applyToClusterSettings(cluster -> cluster.mode(com.mongodb.connection.ClusterConnectionMode.SINGLE));
+        }
+        if (!oidc && this.connectInfo.getUser() != null && !this.connectInfo.getUser().isEmpty()) {
+            String authDb = this.connectInfo.getDb();
+            if (authDb == null || authDb.isEmpty()) authDb = "admin";
+            builder.credential(MongoCredential.createCredential(this.connectInfo.getUser(), authDb,
+                    (this.connectInfo.getPassword() == null ? "" : this.connectInfo.getPassword()).toCharArray()));
+        }
 
         var options = this.connectInfo.getOptions();
         if (oidc) {
+            org.jumpserver.chen.framework.datasource.TokenGuardDriver.requireCurrent(this.connectInfo);
             // chen only RELAYS the Core-minted token; it never contacts
             // Azure. The bearer token is carried in password.
             String token = MongoEntraAuthSupport.resolveToken(this.connectInfo);
@@ -98,7 +86,13 @@ public class MongoConnectionManager implements ConnectionManager {
             // withMechanismProperty(String, T) is generic; a bare lambda
             // will not infer OidcCallback, so use an explicitly typed var.
             MongoCredential.OidcCallback callback =
-                    context -> new MongoCredential.OidcCallbackResult(token);
+                    context -> {
+                        org.jumpserver.chen.framework.datasource.TokenGuardDriver.requireCurrent(this.connectInfo);
+                        Object expiry = options.get("token_expires_at");
+                        if (expiry == null) return new MongoCredential.OidcCallbackResult(token);
+                        long remaining = Long.parseLong(expiry.toString()) - java.time.Instant.now().getEpochSecond();
+                        return new MongoCredential.OidcCallbackResult(token, java.time.Duration.ofSeconds(Math.max(1, remaining)));
+                    };
             MongoCredential credential = MongoCredential.createOidcCredential(null)
                     .withMechanismProperty(MongoCredential.OIDC_CALLBACK_KEY, callback);
             builder.credential(credential);
