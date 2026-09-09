@@ -15,6 +15,7 @@ const message = {
     insert: '插入'
   },
   common: {
+    total_unknown: '總數未知',
     num_row: '{num}行',
     data_size: '數據量',
     log: '日誌輸出',
@@ -29,7 +30,7 @@ const message = {
   tip: {
     upload: '運行SQL文件',
     run: '運行 (Ctrl + Enter)',
-    stop: '停止 (Ctrl + C)',
+    stop: '停止 (Ctrl + Shift + C)',
     format: '格式化 (Ctrl + L)',
     open: '打開 (Ctrl + R)',
     save: '保存 (Ctrl + S)'
@@ -40,6 +41,7 @@ const message = {
     export_selected: '導出選中'
   },
   message: {
+    command_required: '請輸入命令名稱和內容',
     save_success: '保存成功',
     command_sensitive: '命令中疑似包含連線字串、密碼或 Token，請移除敏感資訊後再保存'
   },

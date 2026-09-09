@@ -15,6 +15,7 @@ const message = {
     insert: 'Insert'
   },
   common: {
+    total_unknown: 'Total unknown',
     num_row: '{num} rows',
     data_size: 'Data size',
     log: 'Log Output',
@@ -28,7 +29,7 @@ const message = {
   },
   tip: {
     run: 'Run (Ctrl + Enter)',
-    stop: 'Stop (Ctrl + C)',
+    stop: 'Stop (Ctrl + Shift + C)',
     format: 'Format (Ctrl + L)',
     open: 'Open (Ctrl + R)',
     save: 'Save (Ctrl + S)'
@@ -43,6 +44,7 @@ const message = {
     paste_not_allowed: 'You are not allowed to paste, please contact the administrator to open it!'
   },
   message: {
+    command_required: 'Command name and content are required',
     save_success: 'Saved successfully',
     command_sensitive: 'The command appears to contain a connection string, password, or token. Remove sensitive data before saving.'
   }

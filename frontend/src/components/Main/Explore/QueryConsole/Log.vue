@@ -36,10 +36,11 @@ export default {
   },
 
   mounted() {
-    this.subject.subscribe((data) => {
+    this.subscription = this.subject.subscribe((data) => {
       this.logs.push(data)
     })
   },
+  beforeDestroy() { this.subscription.unsubscribe() },
   methods: {
     capFirst(string) {
       return string.charAt(0).toUpperCase() + string.slice(1)

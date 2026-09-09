@@ -10,7 +10,8 @@ export function formatMongoCommand(command) {
     formatted = formatted.replace(/[ \t]+$/g, '')
   }
 
-  for (const char of command) {
+  for (let index = 0; index < command.length; index++) {
+    const char = command[index]
     if (inString) {
       formatted += char
       if (escaped) {
@@ -21,6 +22,32 @@ export function formatMongoCommand(command) {
         inString = false
         stringQuote = ''
       }
+      continue
+    }
+
+    if (char === '/') {
+      const start = index
+      const lineComment = command[index + 1] === '/'
+      const blockComment = command[index + 1] === '*'
+      let escapedSlash = false
+      let inClass = false
+      index++
+      for (; index < command.length; index++) {
+        const current = command[index]
+        if (lineComment && current === '\n') break
+        if (blockComment && current === '*' && command[index + 1] === '/') { index++; break }
+        if (lineComment || blockComment) continue
+        if (escapedSlash) { escapedSlash = false; continue }
+        if (current === '\\') { escapedSlash = true; continue }
+        if (current === '[') inClass = true
+        if (current === ']') inClass = false
+        if (current === '/' && !inClass) break
+      }
+      formatted += command.slice(start, index + 1)
+      continue
+    }
+    if (/\s/.test(char)) {
+      if (formatted && !/\s$/.test(formatted)) formatted += ' '
       continue
     }
 

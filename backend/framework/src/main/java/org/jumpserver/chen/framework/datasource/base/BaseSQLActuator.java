@@ -287,9 +287,13 @@ public abstract class BaseSQLActuator implements SQLActuator {
                         try {
                             var obj = resultSet.getObject(i);
                             if (obj instanceof Timestamp timestamp) {
-                                fs.add(new Date(timestamp.getTime()));
+                                fs.add(timestamp.toString());
+                            } else if (obj instanceof java.time.LocalDateTime timestamp) {
+                                fs.add(Timestamp.valueOf(timestamp).toString());
                             } else if (obj instanceof Long l) {
                                 fs.add(l.toString());
+                            } else if (obj instanceof java.math.BigDecimal decimal) {
+                                fs.add(decimal.toPlainString());
                             } else if (obj instanceof BigInteger b) {
                                 fs.add(b.toString());
                             } else if (obj instanceof byte[]) {

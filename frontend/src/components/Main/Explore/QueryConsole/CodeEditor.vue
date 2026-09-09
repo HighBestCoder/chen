@@ -122,6 +122,7 @@ export default {
   data() {
     return {
       currentContext: '',
+      hintRequest: 0,
       selectSnippetDialogVisible: false,
       saveSnippetDialogVisible: false,
       options: {
@@ -144,7 +145,7 @@ export default {
           'Ctrl-Enter': (cm) => {
             this.onRun()
           },
-          'Ctrl-C': (cm) => {
+          'Ctrl-Shift-C': (cm) => {
             this.onStop()
           },
           'Ctrl-S': (cm) => {
@@ -171,7 +172,7 @@ export default {
           type: 'button',
           icon: 'iconfont icon-chen-play text-primary',
           tip: this.$t('tip.run'),
-          disabled: () => this.state.inQuery,
+          disabled: () => this.state.inQuery || this.state.disconnected,
           loading: () => {
             return this.state.inQuery
           },
@@ -190,7 +191,7 @@ export default {
           icon: 'iconfont icon-chen-m-geshihuawenzi',
           tip: this.$t('tip.format'),
           onClick: () => this.onFormat(),
-          disabled: () => this.state.inQuery
+          disabled: () => this.state.inQuery || this.state.disconnected
         },
         open: {
           split: true,
@@ -200,7 +201,7 @@ export default {
           onClick: () => {
             this.selectSnippetDialogVisible = true
           },
-          disabled: () => this.state.inQuery
+          disabled: () => this.state.inQuery || this.state.disconnected
         },
         save: {
           type: 'button',
@@ -209,7 +210,7 @@ export default {
           onClick: () => {
             this.saveSnippetDialogVisible = true
           },
-          disabled: () => this.state.inQuery
+          disabled: () => this.state.inQuery || this.state.disconnected
         }
       },
       rightToolbarItems: {
@@ -235,7 +236,7 @@ export default {
       return this.cm
     },
     selectionValue() {
-      return this.cmInstance.getSelection()
+      return this.cmInstance ? this.cmInstance.getSelection() : ''
     },
     autoComplete() {
       return !store.getters.disableautohash
@@ -254,6 +255,7 @@ export default {
       })
     }
   },
+  beforeDestroy() { this.hintRequest++ },
   methods: {
     onSelectSnippets(snippet) {
       if (this.statement.length > 0) {
@@ -263,13 +265,16 @@ export default {
       this.selectSnippetDialogVisible = false
     },
     onRun() {
+      if (this.state.inQuery || this.state.disconnected) return
       const sql = this.selectionValue || this.statement
       this.$emit('action', { action: 'run_sql', data: sql })
     },
     onStop() {
+      if (!this.state.canCancel || this.state.disconnected) return
       this.$emit('action', { action: 'cancel' })
     },
     onFormat() {
+      if (this.state.inQuery || this.state.disconnected) return
       if (store.getters.profile?.dbType === 'mongodb') {
         this.statement = formatMongoCommand(this.statement)
         return
@@ -312,9 +317,11 @@ export default {
       }
     },
     refreshHints(context) {
-      getHints(this.nodeKey, context).then((res) => {
-        this.options.hintOptions.tables = res
-      })
+      const request = ++this.hintRequest
+      this.options.hintOptions.tables = {}
+      return getHints(this.nodeKey, context).then((res) => {
+        if (request === this.hintRequest) this.options.hintOptions.tables = res
+      }).catch(() => { /* request interceptor reports the failure; stale hints stay cleared */ })
     },
     onBeforeUpload(file) {
       this.state.inQuery = true
