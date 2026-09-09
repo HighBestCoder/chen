@@ -448,6 +448,15 @@ public class QueryConsole extends AbstractConsole {
 
     @Override
     public void close() {
+        try {
+            var plan = this.currentPlan;
+            if (plan != null && plan.getStatement() != null) plan.cancel();
+        } catch (SQLException e) {
+            log.warn("Cancel on console close failed", e);
+        } finally {
+            try { if (this.conn != null) this.conn.close(); }
+            catch (SQLException e) { log.warn("Close console connection failed", e); }
+        }
         log.info("console closed");
     }
 }

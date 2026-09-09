@@ -58,14 +58,47 @@ public class RegisterJMSEvent {
     }
 
 
-    public static StreamObserver<ServiceOuterClass.FinishedTaskRequest> requestObserver;
+    private volatile StreamObserver<ServiceOuterClass.FinishedTaskRequest> requestObserver;
+    private final java.util.concurrent.ScheduledExecutorService reconnect = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(task -> {
+        Thread thread = new Thread(task, "chen-session-tasks");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private volatile boolean stopped;
+    private java.util.concurrent.ScheduledFuture<?> retry;
 
-    private void waitForKillSessionMessage() {
-        requestObserver = ServiceGrpc
-                .newStub(this.serviceBlockingStub.getChannel())
-                .dispatchTask(new StreamObserver<>() {
+    private synchronized void scheduleReconnect() {
+        if (stopped || (retry != null && !retry.isDone())) return;
+        retry = reconnect.schedule(() -> {
+            synchronized (this) { retry = null; }
+            waitForKillSessionMessage();
+        }, 1, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
+    protected StreamObserver<ServiceOuterClass.FinishedTaskRequest> openTaskStream(StreamObserver<ServiceOuterClass.TaskResponse> observer) {
+        return ServiceGrpc.newStub(this.serviceBlockingStub.getChannel()).dispatchTask(observer);
+    }
+
+    @jakarta.annotation.PreDestroy
+    public synchronized void stopSessionTasks() {
+        if (stopped) return;
+        stopped = true;
+        if (retry != null) retry.cancel(false);
+        reconnect.shutdownNow();
+        if (requestObserver != null) {
+            try { requestObserver.onCompleted(); }
+            catch (RuntimeException e) { log.warn("Cannot complete session task stream", e); }
+        }
+    }
+
+    private synchronized void waitForKillSessionMessage() {
+        if (stopped) return;
+        try {
+        requestObserver = openTaskStream(new StreamObserver<>() {
                     @Override
                     public void onNext(ServiceOuterClass.TaskResponse taskResponse) {
+                        synchronized (RegisterJMSEvent.this) {
+                        if (stopped) return;
                         JMSSession targetSession = null;
                         for (var session : SessionManager.getStore().values()) {
                             if (session instanceof JMSSession) {
@@ -90,19 +123,26 @@ public class RegisterJMSEvent {
                                     .build();
                             requestObserver.onNext(req);
                         }
+                        }
 
                     }
 
                     @Override
                     public void onError(Throwable throwable) {
-                        log.error("waitSessionMessage error", throwable);
+                        log.error("Session task stream disconnected", throwable);
+                        scheduleReconnect();
 
                     }
 
                     @Override
                     public void onCompleted() {
-                        log.error("waitSessionMessage completed");
+                        log.info("Session task stream completed; reconnecting");
+                        scheduleReconnect();
                     }
                 });
+        } catch (RuntimeException e) {
+            log.error("Cannot open session task stream", e);
+            scheduleReconnect();
+        }
     }
 }

@@ -15,6 +15,7 @@ export class LunaEvent {
   }
 
   handleEventFromLuna(event) {
+    if (event.source !== window.parent || !event.data || typeof event.data !== 'object') return
     const msg = event.data
     switch (msg.name) {
       case MESSAGES.PING:

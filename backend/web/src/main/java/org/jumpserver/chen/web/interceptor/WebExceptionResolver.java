@@ -16,17 +16,17 @@ import java.io.IOException;
 public class WebExceptionResolver implements HandlerExceptionResolver {
     @Override
     public ModelAndView resolveException(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
-        if (ex instanceof ChenException) {
-            response.setStatus(500);
-            response.setHeader("Content-Type", "application/json");
-            try {
-                response.getWriter().write(ex.getMessage());
-            } catch (IOException e) {
-                log.error(e.getMessage());
-            }
-        } else {
-            log.error(ex.getMessage(), ex);
+        if (response.isCommitted()) {
+            return null;
         }
+        response.setStatus(500);
+        response.setContentType("text/plain;charset=UTF-8");
+        try {
+            response.getWriter().write(ex instanceof ChenException ? ex.getMessage() : "Internal server error");
+        } catch (IOException e) {
+            log.error("Failed to write error response", e);
+        }
+        log.error("Request failed", ex);
         return new ModelAndView();
     }
 }
