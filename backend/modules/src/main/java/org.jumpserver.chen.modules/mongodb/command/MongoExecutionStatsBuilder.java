@@ -59,7 +59,7 @@ public final class MongoExecutionStatsBuilder {
             // Writes and `use <db>` produce no result set; the affected-row
             // count is the only volume figure they carry, and it is reported
             // through the same field the relational builder uses.
-            stats.setAffectedRows((long) result.getUpdateCount());
+            if (result.getUpdateCount() >= 0) stats.setAffectedRows((long) result.getUpdateCount());
         }
         return stats;
     }

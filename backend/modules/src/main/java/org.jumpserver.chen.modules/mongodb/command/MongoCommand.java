@@ -38,6 +38,14 @@ public class MongoCommand {
         this.rawText = rawText;
     }
 
+    public boolean writesCollection() {
+        if (type == Type.AGGREGATE && pipeline != null && !pipeline.isEmpty()) {
+            Document last = pipeline.get(pipeline.size() - 1);
+            return last.containsKey("$out") || last.containsKey("$merge");
+        }
+        return type == Type.INSERT || type == Type.UPDATE || type == Type.DELETE || type == Type.DROP_COLLECTION;
+    }
+
     public static MongoCommand showDbs(String rawText) {
         return new MongoCommand(Type.SHOW_DBS, rawText);
     }

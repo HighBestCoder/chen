@@ -60,13 +60,17 @@ public class MongoActuator {
         if (offset > 0) {
             iterable = iterable.skip(offset);
         }
-        iterable = iterable.limit(effectiveLimit);
+        boolean boundedBySafetyCap = command.getLimit() == null ? limit < 0
+                : command.getLimit() == 0 || command.getLimit() > effectiveLimit;
+        iterable = iterable.limit(effectiveLimit + (boundedBySafetyCap ? 1 : 0));
 
         List<Document> documents = new ArrayList<>();
+        boolean truncated;
         try (MongoCursor<Document> cursor = iterable.iterator()) {
             while (documents.size() < effectiveLimit && cursor.hasNext()) {
                 documents.add(cursor.next());
             }
+            truncated = boundedBySafetyCap && cursor.hasNext();
         }
         long queryDone = System.currentTimeMillis();
 
@@ -77,11 +81,14 @@ public class MongoActuator {
             paged = false;
         } else {
             total = collection.countDocuments(command.getFilter());
-            paged = true;
+            paged = limit >= 0;
         }
 
-        return this.adapter.toResult(command.getRawText(), command.getCollection(), documents,
+        SQLQueryResult result = this.adapter.toResult(command.getRawText(), command.getCollection(), documents,
                 command.getProjection(), start, queryDone, total, paged);
+        result.setManualLimitDetected(explicitLimit);
+        result.setTruncated(truncated);
+        return result;
     }
 
     /**
@@ -97,19 +104,26 @@ public class MongoActuator {
         MongoCollection<Document> collection = collectionOf(command);
 
         List<Document> pipeline = new ArrayList<>(command.getPipeline());
-        boolean writesCollection = !pipeline.isEmpty()
-                && (pipeline.get(pipeline.size() - 1).containsKey("$out")
-                    || pipeline.get(pipeline.size() - 1).containsKey("$merge"));
+        boolean writesCollection = command.writesCollection();
         if (!writesCollection && (command.getLimit() != null || !hasLimitStage(pipeline))) {
-            pipeline.add(new Document(LIMIT_STAGE, resolveLimit(command.getLimit(), limit)));
+            int resolved = resolveLimit(command.getLimit(), limit);
+            boolean safetyBound = command.getLimit() == null ? limit < 0
+                    : command.getLimit() == 0 || command.getLimit() > resolved;
+            pipeline.add(new Document(LIMIT_STAGE, resolved + (safetyBound ? 1 : 0)));
         }
 
         AggregateIterable<Document> iterable = collection.aggregate(pipeline);
+        if (writesCollection) {
+            iterable.toCollection();
+            SQLQueryResult result = writeResult(command.getRawText(), -1, start);
+            return result;
+        }
         List<Document> documents = new ArrayList<>();
         boolean truncated;
         // An earlier $limit does not bound the output of later $unwind/$unionWith.
         // Bound retained results independently, without rewriting terminal writes.
-        int cap = limit < 0 ? EXPORT_MAX : MAX_LIMIT;
+        int cap = command.getLimit() != null ? resolveLimit(command.getLimit(), limit)
+                : limit < 0 ? EXPORT_MAX : MAX_LIMIT;
         try (MongoCursor<Document> cursor = iterable.iterator()) {
             while (documents.size() < cap && cursor.hasNext()) {
                 documents.add(cursor.next());
@@ -123,6 +137,7 @@ public class MongoActuator {
         // produced rather than inventing a page count.
         SQLQueryResult result = this.adapter.toResult(command.getRawText(), command.getCollection(), documents,
                 null, start, queryDone, documents.size(), false);
+        result.setManualLimitDetected(command.getLimit() != null || hasLimitStage(command.getPipeline()));
         result.setTruncated(truncated);
         return result;
     }
@@ -148,7 +163,10 @@ public class MongoActuator {
         if (consoleLimit < 0) {
             return EXPORT_MAX;
         }
-        return Math.min(consoleLimit > 0 ? consoleLimit : DEFAULT_LIMIT, MAX_LIMIT);
+        if (consoleLimit > MAX_LIMIT) {
+            throw new MongoCommandException("MongoDB console supports at most 1000 rows per load; select 50, 100 or 500, or use export all");
+        }
+        return consoleLimit > 0 ? consoleLimit : DEFAULT_LIMIT;
     }
 
     private SQLQueryResult executeShowDbs(MongoCommand command) {
@@ -213,7 +231,11 @@ public class MongoActuator {
      * {@code updateCount} as affected rows.
      */
     private SQLQueryResult writeResult(String sql, long affected, long start) {
-        SQLQueryResult result = new SQLQueryResult(sql);
+        SQLQueryResult result = affected < 0 ? new SQLQueryResult(sql) {
+            @Override public String getOutput() {
+                return "Command OK; affected row count is not reported by MongoDB";
+            }
+        } : new SQLQueryResult(sql);
         result.setHasResultSet(false);
         result.setUpdateCount((int) Math.min(affected, Integer.MAX_VALUE));
         long now = System.currentTimeMillis();

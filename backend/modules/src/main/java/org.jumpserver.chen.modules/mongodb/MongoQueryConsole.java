@@ -36,6 +36,7 @@ public class MongoQueryConsole extends AbstractConsole {
     private final MongoCommandParser parser = new MongoCommandParser();
     private final MongoActuator actuator;
     private StateManager<QueryConsoleState> stateManager;
+    private int selectedLimit = 50;
     private final Map<String, DataView> dataViews = new HashMap<>();
 
     public MongoQueryConsole(MongoDatasource datasource, WebSocketSession ws, String nodeKey) {
@@ -46,12 +47,10 @@ public class MongoQueryConsole extends AbstractConsole {
     }
 
     private static int generateConsoleName() {
+        var titles = SessionManager.getCurrentSession().getConsoles().values().stream()
+                .map(c -> c.getTitle()).collect(java.util.stream.Collectors.toSet());
         int num = 1;
-        for (var console : SessionManager.getCurrentSession().getConsoles().values()) {
-            if (console instanceof MongoQueryConsole) {
-                ++num;
-            }
-        }
+        while (titles.contains("Query-" + num)) num++;
         return num;
     }
 
@@ -110,8 +109,6 @@ public class MongoQueryConsole extends AbstractConsole {
             }
             case QueryConsoleAction.ACTION_CANCEL -> {
                 this.getConsoleLogger().info("Cancel is not supported for MongoDB queries in this console");
-                this.getState().setInQuery(false);
-                this.stateManager.commit();
             }
             case QueryConsoleAction.ACTION_CHANGE_CURRENT_CONTEXT -> {
                 var db = (String) action.getData();
@@ -164,25 +161,29 @@ public class MongoQueryConsole extends AbstractConsole {
             return;
         }
 
-        if (command.getType() == MongoCommand.Type.USE_DB) {
-            this.getState().setCurrentContext(command.getTargetDatabase());
-            this.stateManager.commit();
-        }
-
         try {
             DataView dataView = new DataView(command.getRawText(), this.getPacketIO(), this.getConsoleLogger());
             dataView.setSql(command.getRawText());
+            dataView.getStateManager().getState().setLimit(selectedLimit);
             MongoQueryLoader loader = new MongoQueryLoader(session, this.connectionManager,
                     this.actuator, command, aclResult, commandText);
             dataView.setLoadDataInterface((params, sink) -> {
                 var result = loader.loadData(params, sink);
-                this.getConsoleLogger().success(result);
+                if (!result.isHasResultSet() && result.getUpdateCount() < 0) {
+                    this.getConsoleLogger().success(result.getOutput());
+                } else {
+                    this.getConsoleLogger().success(result);
+                }
                 if (result.isTruncated()) {
                     this.getConsoleLogger().warn("Result truncated at the MongoDB console row limit");
                 }
                 return result;
             });
             dataView.loadData();
+            if (command.getType() == MongoCommand.Type.USE_DB) {
+                this.getState().setCurrentContext(this.connectionManager.getCurrentDatabaseName());
+                this.stateManager.commit();
+            }
 
             if (!dataView.isHasTable()) {
                 this.getConsoleLogger().success("Command OK");
@@ -219,6 +220,7 @@ public class MongoQueryConsole extends AbstractConsole {
             dataView.getStateManager().getState().setLoading(true);
             dataView.getStateManager().commit();
             dataView.doAction(action);
+            selectedLimit = dataView.getStateManager().getState().getLimit();
             this.getPacketIO().sendPacket("update_data_view", new UpdateDataView(action.getDataView(), dataView.getData()));
         } catch (Exception e) {
             this.getMessager().send(Message.error("Fetch error", e.getMessage()));
