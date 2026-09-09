@@ -17,6 +17,7 @@ public final class TokenGuardDriver implements Driver {
     }
 
     public static void requireCurrent(DBConnectInfo info) {
+        if (info.getTokenProvider() != null) { info.getTokenProvider().current(); return; }
         Object expires = info.getOptions().get("token_expires_at");
         if (expires == null) return; // Older Core versions do not supply expiry metadata.
         long expiry;
@@ -32,8 +33,13 @@ public final class TokenGuardDriver implements Driver {
 
     @Override
     public Connection connect(String url, Properties properties) throws SQLException {
-        requireCurrent(info);
-        return driver.connect(url, properties);
+        Properties current = (Properties) properties.clone();
+        if (info.getTokenProvider() != null) {
+            var credential = info.getTokenProvider().current();
+            if (current.getProperty("accessToken") != null) current.setProperty("accessToken", credential.token());
+            else current.setProperty("password", credential.token());
+        } else requireCurrent(info);
+        return driver.connect(url, current);
     }
 
     @Override public boolean acceptsURL(String url) throws SQLException { return driver.acceptsURL(url); }

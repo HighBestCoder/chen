@@ -87,6 +87,11 @@ public class MongoConnectionManager implements ConnectionManager {
             // will not infer OidcCallback, so use an explicitly typed var.
             MongoCredential.OidcCallback callback =
                     context -> {
+                        if (this.connectInfo.getTokenProvider() != null) {
+                            var fresh = this.connectInfo.getTokenProvider().current();
+                            long remaining = fresh.expiresAt() - java.time.Instant.now().getEpochSecond();
+                            return new MongoCredential.OidcCallbackResult(fresh.token(), java.time.Duration.ofSeconds(Math.max(1, remaining - 60)));
+                        }
                         org.jumpserver.chen.framework.datasource.TokenGuardDriver.requireCurrent(this.connectInfo);
                         Object expiry = options.get("token_expires_at");
                         if (expiry == null) return new MongoCredential.OidcCallbackResult(token);

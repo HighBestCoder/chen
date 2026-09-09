@@ -28,6 +28,8 @@ public class JmsSessionService implements SessionService {
 
     public Session createNewSession(String token, String remoteAddr) {
 
+        if (token == null || token.startsWith("entra-session:"))
+            throw new IllegalArgumentException("A new login token is required");
         var tokenResp = this.getTokenResponse(token);
         var jmsSession = this.createJMSSession(tokenResp, remoteAddr);
         Datasource datasource = null;
@@ -35,6 +37,7 @@ public class JmsSessionService implements SessionService {
         try {
             datasource = this.createDatasource(tokenResp, jmsSession.getId());
             session = new JMSSession(jmsSession, datasource, remoteAddr, this.serviceBlockingStub, tokenResp);
+            installTokenProvider(tokenResp, session, datasource);
             this.handleGateways(tokenResp, session, datasource);
             return session;
         } catch (RuntimeException failure) {
@@ -48,6 +51,42 @@ public class JmsSessionService implements SessionService {
             }
             throw failure;
         }
+    }
+
+    private java.util.Map<String, String> authSettings(ServiceOuterClass.TokenResponse response) {
+        String protocol = selectedProtocol(response).getName();
+        return response.getData().getPlatform().getProtocolsList().stream()
+                .filter(p -> p.getName().equalsIgnoreCase(protocol)).findFirst()
+                .map(Common.PlatformProtocol::getSettingsMap).orElse(java.util.Map.of());
+    }
+
+    private void installTokenProvider(ServiceOuterClass.TokenResponse original, JMSSession session, Datasource datasource) {
+        var settings = authSettings(original);
+        String id = settings.getOrDefault("entra_session_id", "");
+        if (id.isBlank()) return; // Old Core: retain explicit expiry/reconnect handling.
+        if (!id.equals(session.getJmsSession().getId())) throw new IllegalStateException("Renewal session binding mismatch");
+        var initial = new org.jumpserver.chen.framework.datasource.SessionTokenProvider.Credential(
+                original.getData().getAccount().getSecret(), Long.parseLong(settings.get("token_expires_at")));
+        var provider = new org.jumpserver.chen.framework.datasource.SessionTokenProvider(initial, () -> {
+            var renewed = getTokenResponse("entra-session:" + id);
+            var next = authSettings(renewed);
+            var before = original.getData();
+            var after = renewed.getData();
+            if (!id.equals(next.get("entra_session_id"))
+                    || !before.getUser().getId().equals(after.getUser().getId())
+                    || !before.getAsset().equals(after.getAsset())
+                    || !before.getAccount().getId().equals(after.getAccount().getId())
+                    || !before.getAccount().getUsername().equals(after.getAccount().getUsername())
+                    || !selectedProtocol(original).equals(selectedProtocol(renewed))
+                    || after.getExpireInfo().getExpireAt() <= Instant.now().getEpochSecond())
+                throw new IllegalStateException("Renewed credential target changed; reconnect");
+            for (String key : java.util.List.of("auth_type", "auth_source", "auth_flow_version", "scope"))
+                if (!java.util.Objects.equals(settings.get(key), next.get(key)))
+                    throw new IllegalStateException("Renewed authentication configuration changed; reconnect");
+            return new org.jumpserver.chen.framework.datasource.SessionTokenProvider.Credential(
+                    after.getAccount().getSecret(), Long.parseLong(next.get("token_expires_at")));
+        }, session::allowsCredentialRenewal);
+        datasource.getConnectInfo().setTokenProvider(provider);
     }
 
     private void handleGateways(ServiceOuterClass.TokenResponse tokenResp, Session session, Datasource dataSource) {
@@ -247,7 +286,10 @@ public class JmsSessionService implements SessionService {
     }
 
     private Common.Session createJMSSession(ServiceOuterClass.TokenResponse tokenResp, String remoteAddr) {
+        String renewalSessionId = authSettings(tokenResp).getOrDefault("entra_session_id", "");
+        if (!renewalSessionId.isBlank()) java.util.UUID.fromString(renewalSessionId);
         var jmsSession = Common.Session.newBuilder()
+                .setId(renewalSessionId)
                 .setUserId(tokenResp.getData().getUser().getId())
                 .setUser(String.format("%s(%s)", tokenResp.getData().getUser().getName(), tokenResp.getData().getUser().getUsername()))
                 .setAccountId(tokenResp.getData().getAccount().getId())

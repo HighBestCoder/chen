@@ -7,6 +7,8 @@ import java.util.Map;
 
 @Data
 public class DBConnectInfo {
+    @lombok.ToString.Exclude
+    private org.jumpserver.chen.framework.datasource.SessionTokenProvider tokenProvider;
     private String dbType;
     private String host;
     private Integer port;

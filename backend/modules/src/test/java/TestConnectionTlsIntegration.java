@@ -90,6 +90,39 @@ public class TestConnectionTlsIntegration {
             System.out.println("PASS "+type+" special database name and pool context");passed++;
         } finally {manager.close();}
     }
+    static void renewedPhysicalConnection(String type) throws Exception {
+        var info=info(type);
+        var now=new java.util.concurrent.atomic.AtomicLong(java.time.Instant.now().getEpochSecond());
+        var calls=new java.util.concurrent.atomic.AtomicInteger();
+        java.time.Clock clock=new java.time.Clock() {
+            public java.time.ZoneId getZone(){return java.time.ZoneOffset.UTC;}
+            public java.time.Clock withZone(java.time.ZoneId zone){return this;}
+            public java.time.Instant instant(){return java.time.Instant.ofEpochSecond(now.get());}
+        };
+        String fresh="RenewedFixturePass9!";
+        info.getOptions().put("token_expires_at",now.get()+3600);
+        info.setTokenProvider(new SessionTokenProvider(new SessionTokenProvider.Credential(info.getPassword(),now.get()+3600),
+                ()->{calls.incrementAndGet();return new SessionTokenProvider.Credential(fresh,now.get()+3600);},()->true,clock));
+        var manager=(BaseConnectionManager)manager(info);
+        String alter=type.equals("postgresql")?"ALTER USER fixture WITH PASSWORD '%s'":type.equals("mysql")?
+                "ALTER USER 'fixture'@'%%' IDENTIFIED BY '%s'":"ALTER LOGIN sa WITH PASSWORD = '%s'";
+        try {
+            manager.ping();
+            try(var held=manager.getConnection();var stmt=held.createStatement()) {
+                stmt.execute(String.format(alter,fresh));
+                held.setAutoCommit(false);
+                now.addAndGet(3601);
+                try(var physical=manager.getPhysicalConnection();var query=physical.createStatement();var rows=query.executeQuery("SELECT 1")) {
+                    if(!rows.next() || rows.getInt(1)!=1 || calls.get()!=1)throw new AssertionError("renewal did not reach real driver");
+                }
+                // The existing transaction/connection stays usable. No automatic SQL replay.
+                try(var rows=stmt.executeQuery("SELECT 1")){if(!rows.next())throw new AssertionError("held connection replaced");}
+                held.rollback();held.setAutoCommit(true);
+                stmt.execute(String.format(alter,info.getPassword()));
+            }
+            System.out.println("PASS "+type+" renewed credential on new physical connection; held transaction survives");passed++;
+        } finally {manager.close();}
+    }
     static void expiryOnNewConnection() throws Exception {
         var info=info("postgresql");
         info.getOptions().put("token_expires_at", java.time.Instant.now().getEpochSecond()+3600);
@@ -165,6 +198,7 @@ public class TestConnectionTlsIntegration {
             if(store.getCertificateChain("client").length!=2)throw new AssertionError("client chain truncated");
             System.out.println("PASS full client certificate chain retained");passed++;
         }
+        for(String type:List.of("postgresql","mysql","sqlserver"))renewedPhysicalConnection(type);
         expiryOnNewConnection();
         poolBorrowTimeout();
         for(String type:TYPES)stalledLogin(type);

@@ -106,6 +106,15 @@ public class JMSSession extends BaseSession {
         this.canPaste = tokenResp.getData().getPermission().getEnablePaste();
     }
 
+    public boolean allowsCredentialRenewal() {
+        long now = System.currentTimeMillis();
+        long start = this.jmsSession.getDateStart() * 1000;
+        long last = this.lastActiveTime > 0 ? this.lastActiveTime : start;
+        return !isClosed() && !locked && now < this.expireTime * 1000
+                && now - start < (long) this.maxSessionTime * 3600000
+                && now - last < this.maxIdleTimeDelta * 60000;
+    }
+
     @Override
     public void recordCommand(String command) {
         CommandRecord commandRecord = new CommandRecord(command);
