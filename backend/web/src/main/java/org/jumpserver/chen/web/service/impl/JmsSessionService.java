@@ -30,10 +30,24 @@ public class JmsSessionService implements SessionService {
 
         var tokenResp = this.getTokenResponse(token);
         var jmsSession = this.createJMSSession(tokenResp, remoteAddr);
-        var datasource = this.createDatasource(tokenResp, jmsSession.getId());
-        var session = new JMSSession(jmsSession, datasource, remoteAddr, this.serviceBlockingStub, tokenResp);
-        this.handleGateways(tokenResp, session, datasource);
-        return session;
+        Datasource datasource = null;
+        JMSSession session = null;
+        try {
+            datasource = this.createDatasource(tokenResp, jmsSession.getId());
+            session = new JMSSession(jmsSession, datasource, remoteAddr, this.serviceBlockingStub, tokenResp);
+            this.handleGateways(tokenResp, session, datasource);
+            return session;
+        } catch (RuntimeException failure) {
+            if (session != null) {
+                try { session.close(); } catch (RuntimeException cleanup) { failure.addSuppressed(cleanup); }
+            } else {
+                if (datasource != null) {
+                    try { datasource.close(); } catch (RuntimeException cleanup) { failure.addSuppressed(cleanup); }
+                }
+                try { closeSession(jmsSession); } catch (RuntimeException cleanup) { failure.addSuppressed(cleanup); }
+            }
+            throw failure;
+        }
     }
 
     private void handleGateways(ServiceOuterClass.TokenResponse tokenResp, Session session, Datasource dataSource) {
@@ -50,11 +64,17 @@ public class JmsSessionService implements SessionService {
                 .build();
 
         var resp = this.serviceBlockingStub.createForward(req);
+        if (!resp.getStatus().getOk()) {
+            throw new IllegalStateException("Gateway connection failed");
+        }
+        session.setGatewayId(resp.getId());
+        if (resp.getPort() <= 0 || resp.getPort() > 65535) {
+            throw new IllegalStateException("Gateway returned an invalid port");
+        }
 
         dataSource.getConnectInfo().setProxyHost("127.0.0.1");
         dataSource.getConnectInfo().setProxyPort(resp.getPort());
 
-        session.setGatewayId(resp.getId());
     }
 
     private void closeSession(Common.Session session) {
@@ -180,7 +200,7 @@ public class JmsSessionService implements SessionService {
                     dbConnectInfo.getDbType(), relationalDecision.decision()
             );
             case UNKNOWN -> log.warn(
-                    "Unknown auth_flow_version '{}', continue with base datasource flow",
+                    "Unknown auth_flow_version '{}', connection will be rejected",
                     authSpec.authFlowVersion()
             );
         }
@@ -197,13 +217,8 @@ public class JmsSessionService implements SessionService {
                     relationalDecision.decision(), dbConnectInfo.getDbType()
             );
         } else if (relationalDecision.isUnsupported()) {
-            log.warn(
-                    "Relational auth decision UNSUPPORTED: dbType={}, route={}, reason={} — "
-                            + "datasource will use the inbound password verbatim",
-                    relationalDecision.normalizedDbType(),
-                    relationalDecision.routeName(),
-                    relationalDecision.reason()
-            );
+            throw new IllegalArgumentException("Unsupported authentication flow for "
+                    + relationalDecision.normalizedDbType() + ": " + relationalDecision.routeName());
         }
     }
 
