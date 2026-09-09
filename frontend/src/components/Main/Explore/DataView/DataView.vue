@@ -179,7 +179,9 @@ export default {
   },
   watch: {
     data() {
-      if (!this.init) {
+      const names = this.data.fields.map(field => field.name)
+      const headers = this.hotSettings.colHeaders
+      if (!this.init || names.length !== headers.length || names.some((name, i) => name !== headers[i])) {
         this.initTable()
       } else {
         this.reloadTable()
@@ -223,7 +225,9 @@ export default {
       const headers = this.data.fields.map((item) => item.name)
       const columns = this.data.fields.map((item) => {
         return {
-          data: item.name,
+          // A BSON field/SQL alias may literally contain dots. String accessors
+          // are treated as nested paths by Handsontable and lose such values.
+          data: row => row[item.name],
           type: 'text',
           readOnly: true
         }

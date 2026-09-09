@@ -38,12 +38,23 @@ public final class MongoExecutionStatsBuilder {
             if (result.getTotal() >= 0) {
                 stats.setTotalRows((long) result.getTotal());
             }
-            stats.setImpactColumns(result.getFields().stream()
+            stats.setImpactColumns(result.getStreamedImpactColumns() != null
+                    ? result.getStreamedImpactColumns() : result.getFields().stream()
                     .map(f -> f.getName())
                     .filter(n -> n != null && !n.isEmpty())
                     .collect(Collectors.toList()));
             applySizeStats(stats, result, data);
-            applyColumnSizeStats(stats, result.getFields(), data);
+            if (result.getStreamedSizeByColumn() != null) {
+                stats.putExtra("size_by_column", new LinkedHashMap<>(result.getStreamedSizeByColumn()));
+                stats.putExtra("column_size", new LinkedHashMap<>(result.getStreamedSizeByColumn()));
+                stats.putExtra("size_by_column_source_status", result.getSizeByColumnSourceStatus());
+                stats.putExtra("size_measurement", "utf8_leaf_values_v2");
+            } else if (SizeCalculator.STATUS_UNAVAILABLE.equals(result.getSizeByColumnSourceStatus())) {
+                stats.putExtra("size_by_column_source_status", SizeCalculator.STATUS_UNAVAILABLE);
+                stats.putExtra("size_by_column_source_unavailable_reason", result.getSizeByColumnSourceUnavailableReason());
+            } else {
+                applyColumnSizeStats(stats, result.getFields(), data);
+            }
         } else {
             // Writes and `use <db>` produce no result set; the affected-row
             // count is the only volume figure they carry, and it is reported
@@ -63,7 +74,7 @@ public final class MongoExecutionStatsBuilder {
         long measured = result.getStreamedSizeBytes();
         String status = result.getSizeStatsStatus();
         String unavailableReason = result.getSizeStatsUnavailableReason();
-        if (measured < 0) {
+        if (measured < 0 && !SizeCalculator.STATUS_UNAVAILABLE.equals(status)) {
             SizeCalculator.Result size = SizeCalculator.compute(result.getFields(), data);
             measured = size.sizeBytes;
             status = size.status;
