@@ -23,6 +23,7 @@ public class TestQueryLimitBehavior {
         detectsManualLimits();
         rewritesToolbarLimits();
         recordsLimitAuditExtras();
+        preservesUnionLimits();
 
         if (failures > 0) {
             System.err.println("FAIL: " + failures + " case(s) failed");
@@ -55,6 +56,19 @@ public class TestQueryLimitBehavior {
         report("sqlserver OFFSET FETCH 200 detected",
                 PageUtils.getLimit("SELECT * FROM users ORDER BY id OFFSET 0 ROWS FETCH NEXT 200 ROWS ONLY", DbType.sqlserver) == 200,
                 200, PageUtils.getLimit("SELECT * FROM users ORDER BY id OFFSET 0 ROWS FETCH NEXT 200 ROWS ONLY", DbType.sqlserver));
+    }
+
+    private static void preservesUnionLimits() throws Exception {
+        for (DbType type : List.of(DbType.mysql, DbType.postgresql)) {
+            String sql = "SELECT id FROM users UNION ALL SELECT id FROM archived_users LIMIT 200";
+            var union = plan(sql, type, 50, "toolbar");
+            report(type + " UNION manual SQL preserved", sql.equals(union.getTargetSQL()), sql, union.getTargetSQL());
+            report(type + " UNION records manual limit", union.isManualLimitDetected() && union.getQueryLimit() == 200,
+                    200, union.getQueryLimit());
+            String large = "SELECT * FROM users LIMIT 4294967295";
+            var big = plan(large, type, 50, "toolbar");
+            report(type + " large manual limit not overwritten", large.equals(big.getTargetSQL()), large, big.getTargetSQL());
+        }
     }
 
     private static void rewritesToolbarLimits() throws Exception {

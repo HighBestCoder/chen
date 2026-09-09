@@ -4,6 +4,7 @@ import org.jumpserver.chen.framework.datasource.sql.SQLQueryResult;
 import org.jumpserver.chen.modules.mongodb.MongoConnectionManager;
 import org.jumpserver.chen.modules.mongodb.command.MongoActuator;
 import org.jumpserver.chen.modules.mongodb.command.MongoCommandParser;
+import java.util.List;
 
 /**
  * Live probe: drives aggregate and the write commands through the real Mongo
@@ -17,7 +18,7 @@ import org.jumpserver.chen.modules.mongodb.command.MongoCommandParser;
 public class TestMongoWriteExecution {
     static int failures = 0;
 
-    private static final String DB = "t_a1_write";
+    private static final String DB = "t_a1_write_" + java.util.UUID.randomUUID().toString().replace("-", "");
     private static final String COLL = "order";
 
     public static void main(String[] args) {
@@ -44,6 +45,7 @@ public class TestMongoWriteExecution {
             aggregateGroupsRows(parser, actuator);
             aggregateWithoutLimitIsCapped(parser, actuator);
             aggregateKeepsAuthorsOwnLimit(parser, actuator);
+            aggregateTerminalWriteAndExpansion(parser, actuator, cm);
             dropRemovesCollection(parser, actuator, cm);
         } finally {
             try {
@@ -144,6 +146,10 @@ public class TestMongoWriteExecution {
                 bulk + ".aggregate([{$match: {}}, {$limit: 3}])", 5);
         report("pipeline $limit wins over console limit", own.getData().size() == 3,
                 3, own.getData().size());
+        SQLQueryResult chained = execute(parser, actuator,
+                bulk + ".aggregate([{$limit: 10}]).limit(2)", 5);
+        report("aggregate cursor limit is not ignored", chained.getData().size() == 2,
+                2, chained.getData().size());
 
         run(parser, actuator, bulk + ".drop()");
     }
@@ -160,6 +166,25 @@ public class TestMongoWriteExecution {
             }
         }
         report("collection is gone after drop", !stillThere, false, stillThere);
+    }
+
+    private static void aggregateTerminalWriteAndExpansion(MongoCommandParser parser, MongoActuator actuator,
+                                                            MongoConnectionManager cm) {
+        var collection = cm.getDatabase(DB).getCollection("bounds");
+        List<Integer> values = new java.util.ArrayList<>();
+        for (int i = 0; i < 1500; i++) values.add(i);
+        collection.insertOne(new Document("items", values));
+        var expanded = execute(parser, actuator,
+                "db.bounds.aggregate([{$limit: 1}, {$unwind: '$items'}])", 5);
+        report("limit before unwind cannot exhaust GUI memory", expanded.getData().size() == 1000,
+                1000, expanded.getData().size());
+        report("expanded result reports truncation", expanded.isTruncated(), true, expanded.isTruncated());
+
+        var out = execute(parser, actuator, "db.bounds.aggregate([{$unwind: '$items'}, {$project: {_id: 0}}, {$out: 'bounds_out'}])", 5);
+        long stored = cm.getDatabase(DB).getCollection("bounds_out").countDocuments();
+        report("terminal $out is not followed by injected limit", stored == 1500, 1500L, stored);
+        var zero = execute(parser, actuator, "db.bounds_out.find({}).limit(0)", 5);
+        report("limit zero is bounded on GUI path", zero.getData().size() == 1000, 1000, zero.getData().size());
     }
 
     private static int fieldIndex(SQLQueryResult result, String name) {

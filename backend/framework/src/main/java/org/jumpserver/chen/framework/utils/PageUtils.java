@@ -551,6 +551,9 @@ public class PageUtils {
             if (stmt instanceof SQLSelectStatement) {
                 SQLSelectStatement selectStmt = (SQLSelectStatement) stmt;
                 SQLSelectQuery query = selectStmt.getSelect().getQuery();
+                if (query instanceof SQLUnionQuery union) {
+                    return manualRowCount(union.getLimit());
+                }
                 if (query instanceof SQLSelectQueryBlock) {
                     SQLLimit limit;
                     SQLExpr rowCountExpr;
@@ -563,7 +566,7 @@ public class PageUtils {
 
                         rowCountExpr = limit.getRowCount();
                         if (rowCountExpr instanceof SQLNumericLiteralExpr) {
-                            rowCount = ((SQLNumericLiteralExpr) rowCountExpr).getNumber().intValue();
+                            rowCount = manualNumericCount((SQLNumericLiteralExpr) rowCountExpr);
                             return rowCount;
                         }
 
@@ -577,7 +580,7 @@ public class PageUtils {
 
                         rowCountExpr = limit.getRowCount();
                         if (rowCountExpr instanceof SQLNumericLiteralExpr) {
-                            rowCount = ((SQLNumericLiteralExpr) rowCountExpr).getNumber().intValue();
+                            rowCount = manualNumericCount((SQLNumericLiteralExpr) rowCountExpr);
                             return rowCount;
                         }
                         return Integer.MAX_VALUE;
@@ -587,7 +590,7 @@ public class PageUtils {
                         limit = ((OdpsSelectQueryBlock) query).getLimit();
                         rowCountExpr = limit != null ? limit.getRowCount() : null;
                         if (rowCountExpr instanceof SQLNumericLiteralExpr) {
-                            rowCount = ((SQLNumericLiteralExpr) rowCountExpr).getNumber().intValue();
+                            rowCount = manualNumericCount((SQLNumericLiteralExpr) rowCountExpr);
                             return rowCount;
                         }
 
@@ -603,7 +606,7 @@ public class PageUtils {
                             }
                             SQLExpr topExpr = top.getExpr();
                             if (topExpr instanceof SQLNumericLiteralExpr) {
-                                return ((SQLNumericLiteralExpr) topExpr).getNumber().intValue();
+                                return manualNumericCount((SQLNumericLiteralExpr) topExpr);
                             }
                             return Integer.MAX_VALUE;
                         }
@@ -629,6 +632,23 @@ public class PageUtils {
 
             return -1;
         }
+    }
+
+    private static int manualRowCount(SQLLimit limit) {
+        if (limit == null || limit.getRowCount() == null) {
+            return -1;
+        }
+        return limit.getRowCount() instanceof SQLNumericLiteralExpr numeric
+                ? manualNumericCount(numeric) : Integer.MAX_VALUE;
+    }
+
+    private static int manualNumericCount(SQLNumericLiteralExpr expr) {
+        // Detection must not wrap a large user limit into -1 and rewrite it.
+        java.math.BigDecimal value = new java.math.BigDecimal(expr.getNumber().toString());
+        if (value.signum() < 0 || value.compareTo(java.math.BigDecimal.valueOf(Integer.MAX_VALUE)) > 0) {
+            return Integer.MAX_VALUE;
+        }
+        return value.intValue();
     }
 
     public static boolean hasUnorderedLimit(String sql, DbType dbType) {
