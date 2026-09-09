@@ -11,6 +11,7 @@ tests=(
   TestMongoExecutionStatsBuilder TestMongoEntraAuthSupport TestMongoDocumentCompleteness TestMongoDocumentExport
   TestQueryLimitBehavior TestSqlServerTop TestSqlPermissionErrorClassifier
   TestColumnSizeKeyResolver TestStreamingStatsBuilder TestStreamingSizeParity
+  TestConsoleFiles TestQueryConsoleSecurity
   TestDataViewColumns TestDataViewExport TestRelationalAuthFlowHandler
   TestSqlServerAccessTokenBridge TestSslPropsDerivation
 )

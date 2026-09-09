@@ -2,6 +2,7 @@ package org.jumpserver.chen.framework.console;
 
 import com.alibaba.druid.sql.parser.ParserException;
 import com.alibaba.fastjson.JSON;
+import org.jumpserver.chen.framework.audit.SqlExecutionStatsBuilder;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.jumpserver.chen.framework.console.action.DataViewAction;
@@ -22,6 +23,7 @@ import org.jumpserver.chen.framework.jms.acl.ACLResult;
 import org.jumpserver.chen.framework.jms.entity.CommandRecord;
 import org.jumpserver.chen.framework.jms.impl.ACLFilterImpl;
 import org.jumpserver.chen.framework.session.SessionManager;
+import org.jumpserver.chen.framework.utils.SessionFiles;
 import org.jumpserver.chen.framework.utils.TreeUtils;
 import org.jumpserver.chen.framework.ws.io.Packet;
 import org.jumpserver.chen.wisp.Common;
@@ -231,29 +233,23 @@ public class QueryConsole extends AbstractConsole {
 
 
     public void onSQLFile(String filename) {
-        var filePath = SessionManager.getCurrentSession().getTempPath().resolve(filename);
-        var file = filePath.toFile();
-
-        if (!file.exists()) {
-            this.getConsoleLogger().error("%s: %s", MessageUtils.get("msg.error.file_not_found"), filename);
+        var session = SessionManager.getCurrentSession();
+        if (!session.canUpload()) {
+            this.getConsoleLogger().error("%s", MessageUtils.get("msg.error.no_permission"));
             return;
         }
-        if (!file.isFile()) {
-            this.getConsoleLogger().error("%s: %s", MessageUtils.get("msg.error.file_not_file"), filename);
-            return;
-        }
-        if (!file.canRead()) {
-            this.getConsoleLogger().error("%s: %s", MessageUtils.get("msg.error.file_not_readable"), filename);
-            return;
-        }
-
         try {
-            var sql = Files.readString(file.toPath());
-            this.onSQL(sql);
+            var filePath = SessionFiles.existing(session.getTempPath(), filename);
+            if (!filename.startsWith("sql_") || !filename.endsWith(".sql")) {
+                throw new IOException("Invalid SQL upload key");
+            }
+            try {
+                this.onSQL(Files.readString(filePath));
+            } finally {
+                Files.deleteIfExists(filePath);
+            }
         } catch (IOException e) {
             this.getConsoleLogger().error("%s: %s", MessageUtils.get("msg.error.file_read_error"), e.getMessage());
-        } finally {
-            file.delete();
         }
     }
 
@@ -262,34 +258,35 @@ public class QueryConsole extends AbstractConsole {
         this.stateManager.commit();
         var session = SessionManager.getCurrentSession();
 
-        var aclResult = session.checkACL(sql, this.getConnection());
-        if (aclResult != null) {
-            if (aclResult.getRiskLevel() == Common.RiskLevel.Reject || aclResult.getRiskLevel() == Common.RiskLevel.ReviewReject) {
-                this.getConsoleLogger().error("%s", MessageUtils.get("msg.error.acl_reject"));
-                CommandRecord commandRecord = new CommandRecord(sql);
-                commandRecord.applyACL(aclResult);
-                session.recordCommand(commandRecord);
-
-                this.getState().setInQuery(false);
-                this.stateManager.commit();
-                return;
-            }
-            if (aclResult.getApprovedCommandHash() != null
-                    && !aclResult.getApprovedCommandHash().equals(ACLFilterImpl.commandHash(sql))) {
-                this.getConsoleLogger().error("%s", MessageUtils.get("msg.error.acl_reject"));
-                CommandRecord commandRecord = new CommandRecord(sql);
-                commandRecord.applyACL(aclResult);
-                commandRecord.setError("approved command hash mismatch");
-                session.recordCommand(commandRecord);
-
-                this.getState().setInQuery(false);
-                this.stateManager.commit();
-                return;
-            }
-        }
-
-
+        ACLResult aclResult = null;
         try {
+            aclResult = session.checkACL(sql, this.getConnection());
+            if (aclResult != null) {
+                if (aclResult.getRiskLevel() == Common.RiskLevel.Reject || aclResult.getRiskLevel() == Common.RiskLevel.ReviewReject) {
+                    this.getConsoleLogger().error("%s", MessageUtils.get("msg.error.acl_reject"));
+                    CommandRecord commandRecord = new CommandRecord(sql);
+                    commandRecord.applyACL(aclResult);
+                    session.recordCommand(commandRecord);
+
+                    this.getState().setInQuery(false);
+                    this.stateManager.commit();
+                    return;
+                }
+                if (aclResult.getApprovedCommandHash() != null
+                        && !aclResult.getApprovedCommandHash().equals(ACLFilterImpl.commandHash(sql))) {
+                    this.getConsoleLogger().error("%s", MessageUtils.get("msg.error.acl_reject"));
+                    CommandRecord commandRecord = new CommandRecord(sql);
+                    commandRecord.applyACL(aclResult);
+                    commandRecord.setError("approved command hash mismatch");
+                    session.recordCommand(commandRecord);
+
+                    this.getState().setInQuery(false);
+                    this.stateManager.commit();
+                    return;
+                }
+            }
+
+
             var stmts = this.getSqlActuator().parseSQL(SQL.of(sql));
             var clearOthers = true;
             for (String stmt : stmts) {
@@ -305,6 +302,7 @@ public class QueryConsole extends AbstractConsole {
             }
             this.ensureCurrentSchema();
         } catch (ParserException e) {
+            recordPreExecutionFailure(sql, aclResult, e);
             this.getConsoleLogger().error("%s: %s", MessageUtils.get("msg.error.parse_error"), e.getMessage());
             this.getPacketIO().sendPacket("message", Message.error(MessageUtils.get("msg.error.parse_error"), e.getMessage()));
         } catch (SQLException e) {
@@ -321,6 +319,16 @@ public class QueryConsole extends AbstractConsole {
             this.getState().setCanCancel(false);
             this.stateManager.commit();
         }
+    }
+
+    private void recordPreExecutionFailure(String sql, ACLResult acl, Throwable error) {
+        CommandRecord record = new CommandRecord(sql);
+        record.applyACL(acl);
+        record.setError(error.getMessage());
+        var stats = SqlExecutionStatsBuilder.fromFailure(this.datasource, sql, error);
+        stats.setRawCommand(sql);
+        record.setExecutionStats(stats);
+        SessionManager.getCurrentSession().recordCommand(record);
     }
 
     private SQLActuator getSqlActuator() {
@@ -360,7 +368,28 @@ public class QueryConsole extends AbstractConsole {
         DataView dataView = new DataView(plan.getSourceSQL(), this.getPacketIO(), this.getConsoleLogger());
         dataView.setSql(plan.getSourceSQL());
 
+        // The submitted batch was approved once by onSQL. Every later load
+        // is a new execution and must be checked before generateTargetSQL counts rows.
+        boolean[] firstLoad = {true};
         dataView.setLoadDataInterface((sqlQueryParams, sink) -> {
+            boolean initial = firstLoad[0];
+            firstLoad[0] = false;
+            if (!initial) {
+                ACLResult fresh = null;
+                try {
+                    fresh = SessionManager.getCurrentSession().checkACL(plan.getSourceSQL(), this.getConnection());
+                    if (fresh != null && (fresh.getRiskLevel() == Common.RiskLevel.Reject
+                            || fresh.getRiskLevel() == Common.RiskLevel.ReviewReject
+                            || (fresh.getApprovedCommandHash() != null && !fresh.getApprovedCommandHash()
+                            .equals(ACLFilterImpl.commandHash(plan.getSourceSQL()))))) {
+                        throw new SQLException("Command rejected by ACL or approved command hash mismatch");
+                    }
+                    plan.setAclResult(fresh);
+                } catch (RuntimeException | SQLException e) {
+                    recordPreExecutionFailure(plan.getSourceSQL(), fresh, e);
+                    throw new SQLException(e.getMessage(), e);
+                }
+            }
             sqlQueryParams.setTimeout(this.getState().getTimeout());
 
             plan.setSqlQueryParams(sqlQueryParams);
@@ -374,11 +403,15 @@ public class QueryConsole extends AbstractConsole {
             this.getState().setCanCancel(true);
             this.stateManager.commit();
 
-            var result = plan.executeWithAudit();
-            this.currentPlan = null;
-
-            this.getConsoleLogger().success(result);
-            return result;
+            try {
+                var result = plan.executeWithAudit();
+                this.getConsoleLogger().success(result);
+                return result;
+            } finally {
+                this.currentPlan = null;
+                this.getState().setCanCancel(false);
+                this.stateManager.commit();
+            }
         });
 
 
