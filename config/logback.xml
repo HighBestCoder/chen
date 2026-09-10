@@ -11,15 +11,16 @@
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <FileNamePattern>data/logs/chen.log.%d{yyyy-MM-dd}.%i.gz</FileNamePattern>
             <maxFileSize>10MB</maxFileSize>
-            <compressionMode>GZ</compressionMode>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
         </rollingPolicy>
         <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
             <pattern>%d{yyyy-MM-dd HH:mm:ss,Asia/Shanghai} [%thread] %-5level %logger - %msg%n</pattern>
         </encoder>
     </appender>
 
-    <logger name="org.springframework.*" level="INFO"/>
-    <logger name="org.jumpserver.chen.*" level="INFO"/>
+    <logger name="org.springframework" level="INFO"/>
+    <logger name="org.jumpserver.chen" level="INFO"/>
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
         <appender-ref ref="FILE"/>
