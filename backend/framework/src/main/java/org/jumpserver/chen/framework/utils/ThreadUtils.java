@@ -17,8 +17,10 @@ public class ThreadUtils {
 
         @Override
         public void run() {
+            String previous = SessionManager.getContextToken();
             SessionManager.setContext(token);
-            runnable.run();
+            try { runnable.run(); }
+            finally { SessionManager.setContext(previous); }
         }
     }
 
@@ -29,13 +31,18 @@ public class ThreadUtils {
             return;
         }
         ExecutorService executorService = Executors.newSingleThreadExecutor();
+        Future<?> future = null;
         try {
-            Future<?> future = executorService.submit(runnable);
+            future = executorService.submit(runnable);
             future.get(timeout, TimeUnit.SECONDS);
-        } catch (ExecutionException | InterruptedException | TimeoutException e) {
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(e);
+        } catch (ExecutionException | TimeoutException e) {
             throw new RuntimeException(e);
         } finally {
-            executorService.shutdown();
+            if (future != null && !future.isDone()) future.cancel(true);
+            executorService.shutdownNow();
         }
     }
 }

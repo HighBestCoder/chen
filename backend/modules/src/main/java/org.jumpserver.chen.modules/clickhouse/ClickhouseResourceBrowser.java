@@ -24,25 +24,34 @@ public class ClickhouseResourceBrowser extends BaseResourceBrowser {
         return this.getSchemas(SQL.of(SQL_GET_SCHEMAS));
     }
 
-    private static final String SQL_GET_TABLES = "select table_name  from information_schema.tables where table_schema = ?";
+    private static final String SQL_GET_TABLES = "select name from system.tables where database = ? and engine NOT LIKE '%View'";
 
     @Override
     public List<Table> getTables(String schema) throws SQLException {
         return this.getTables(SQL.bound(SQL_GET_TABLES, schema));
     }
 
-    private static final String SQL_GET_VIEWS = "select table_name  from information_schema.views where table_schema = ?";
+    private static final String SQL_GET_VIEWS = "select name from system.tables where database = ? and engine LIKE '%View'";
 
     @Override
     public List<View> getViews(String schema) throws SQLException {
         return this.getViews(SQL.bound(SQL_GET_VIEWS, schema));
     }
 
-    private static final String SQL_GET_FIELDS = "SELECT COLUMN_NAME AS NAME, COLUMN_TYPE AS TYPE, COLUMN_KEY AS `KEY`, IS_NULLABLE AS `NULLABLE`, COLUMN_DEFAULT AS `DEFAULT`, EXTRA AS EXTRA, COLUMN_COMMENT AS COMMENT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?";
+    private static final String SQL_GET_FIELDS = "SELECT name,type FROM system.columns WHERE database = ? AND table = ? ORDER BY position";
 
     @Override
     public List<Field> getFields(String schema, String table) throws SQLException {
-        return this.getFields(SQL.bound(SQL_GET_FIELDS, schema, table));
+        var fields = this.getSQLActuator().getObjects(SQL.bound(SQL_GET_FIELDS, schema, table),
+                Field.class, java.util.Map.of("name", 1, "type", 2));
+        for (var field : fields) {
+            field.setSchema(schema);
+            field.setTable(table);
+            field.setNullable(field.getType().startsWith("Nullable(")
+                    || field.getType().startsWith("LowCardinality(Nullable("));
+            // ClickHouse sorting/primary keys do not enforce row uniqueness.
+        }
+        return fields;
     }
 
 
