@@ -92,7 +92,7 @@ const modeMap = {
 
 // Keep in sync with the "mongo" hint list in MongoSqlHintsHandlerStub.java
 const mongoKeywords = [
-  'db', 'find', 'aggregate',
+  'db', 'getCollection', 'find', 'findOne', 'countDocuments', 'distinct', 'skip', 'aggregate',
   'insertOne', 'insertMany', 'updateOne', 'updateMany', 'deleteOne', 'deleteMany', 'drop',
   'show dbs', 'show collections', 'use', 'limit', 'sort', 'ISODate'
 ]
