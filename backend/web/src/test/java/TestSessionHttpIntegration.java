@@ -31,7 +31,7 @@ public class TestSessionHttpIntegration {
         Path root=Files.createTempDirectory("chen-http-test-");
         Path drivers=Files.createDirectory(root.resolve("drivers"));
         Path files=Files.createDirectory(root.resolve("files"));
-        String token=null;WebSocket socket=null;
+        String token=null, secondToken=null;WebSocket socket=null, secondSocket=null;
         try(var context=(ServletWebServerApplicationContext)SpringApplication.run(WebDbApplication.class,
                 "--server.port=0","--server.servlet.context-path=/chen","--mock.enable=true",
                 "--driver.driver-path="+drivers,"--grpc.client.wisp.address=static://127.0.0.1:1",
@@ -44,7 +44,7 @@ public class TestSessionHttpIntegration {
             DBConnectInfo info=new DBConnectInfo();info.setDbType("mysql");
             Datasource ds=(Datasource)Proxy.newProxyInstance(Datasource.class.getClassLoader(),new Class[]{Datasource.class},
                     (p,m,a)->m.getName().equals("getConnectInfo")?info:null);
-            BaseSession session=new BaseSession(ds,"127.0.0.1"){@Override public Path getTempPath(){return files;}};
+            BaseSession session=new BaseSession(ds,"127.0.0.1"){@Override public Path getTempPath(){return files;} @Override public String getDatasourceName(){return "instance-A";}};
             token=SessionManager.registerSession(session);CountDownLatch ready=new CountDownLatch(1);
             socket=client.newWebSocketBuilder().subprotocols(token).buildAsync(URI.create(ws),new WebSocket.Listener(){
                 final StringBuilder text=new StringBuilder();
@@ -57,6 +57,29 @@ public class TestSessionHttpIntegration {
             require(ready.await(5,TimeUnit.SECONDS),"registered session failed activation over real WebSocket");
             var profile=client.send(HttpRequest.newBuilder(URI.create(base+"/api/profile")).header("token",token).timeout(Duration.ofSeconds(3)).build(),HttpResponse.BodyHandlers.ofString());
             require(profile.statusCode()==200 && profile.body().contains("mysql"),"valid identity failed real HTTP profile request");
+            // U01: two independent instance sessions share the server, never their identity.
+            Path secondFiles=Files.createDirectory(root.resolve("second-files"));
+            DBConnectInfo secondInfo=new DBConnectInfo();secondInfo.setDbType("mongodb");
+            Datasource secondDs=(Datasource)Proxy.newProxyInstance(Datasource.class.getClassLoader(),new Class[]{Datasource.class},
+                    (p,m,a)->m.getName().equals("getConnectInfo")?secondInfo:null);
+            BaseSession second=new BaseSession(secondDs,"127.0.0.1") {
+                @Override public Path getTempPath(){return secondFiles;}
+                @Override public String getDatasourceName(){return "instance-B";}
+            };
+            secondToken=SessionManager.registerSession(second);
+            secondSocket=client.newWebSocketBuilder().subprotocols(secondToken).buildAsync(URI.create(ws),new WebSocket.Listener(){}).get(5,TimeUnit.SECONDS);
+            long activationDeadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(3);
+            while(!second.isActive() && System.nanoTime()<activationDeadline)Thread.sleep(10);
+            require(second.isActive() && !token.equals(secondToken),"second instance did not get its own active identity");
+            for(int i=0;i<12;i++) {
+                var aRequest=HttpRequest.newBuilder(URI.create(base+"/api/profile?asset=instance-B")).header("token",token).build();
+                var bRequest=HttpRequest.newBuilder(URI.create(base+"/api/profile?asset=instance-A")).header("token",secondToken).build();
+                var aFuture=client.sendAsync(aRequest,HttpResponse.BodyHandlers.ofString());
+                var bFuture=client.sendAsync(bRequest,HttpResponse.BodyHandlers.ofString());
+                var aResult=aFuture.get(5,TimeUnit.SECONDS);var bResult=bFuture.get(5,TimeUnit.SECONDS);
+                require(aResult.statusCode()==200 && aResult.body().contains("instance-A") && aResult.body().contains("mysql") && !aResult.body().contains("instance-B"),"A leaked B identity");
+                require(bResult.statusCode()==200 && bResult.body().contains("instance-B") && bResult.body().contains("mongodb") && !bResult.body().contains("instance-A"),"B leaked A identity");
+            }
             rejectHandshake(client,ws,token);require(session.isActive(),"duplicate handshake killed original socket");
             Files.writeString(files.resolve("result.csv"),"fixture");
             socket.sendClose(WebSocket.NORMAL_CLOSURE,"").get(3,TimeUnit.SECONDS);
@@ -64,8 +87,13 @@ public class TestSessionHttpIntegration {
             while((SessionManager.getSession(token)!=null || Files.exists(files)) && System.nanoTime()<deadline)Thread.sleep(10);
             require(SessionManager.getSession(token)==null && !Files.exists(files),"real socket close did not clean session/files");
             require(client.send(HttpRequest.newBuilder(URI.create(base+"/api/profile")).header("token",token).timeout(Duration.ofSeconds(3)).build(),HttpResponse.BodyHandlers.ofString()).statusCode()==401,"closed token retained HTTP access");
-            System.out.println("OK: embedded HTTP and WebSocket authentication/activation/duplicate rejection/close cleanup");
+            require(second.isActive(),"closing A killed B");
+            var surviving=client.send(HttpRequest.newBuilder(URI.create(base+"/api/profile")).header("token",secondToken).build(),HttpResponse.BodyHandlers.ofString());
+            require(surviving.statusCode()==200 && surviving.body().contains("instance-B"),"B lost identity after A closed");
+            second.close();
+            System.out.println("OK: embedded HTTP and WebSocket authentication/activation/duplicate rejection/close cleanup; two-instance concurrent HTTP identity and independent close");
         } finally {
+            if(secondSocket!=null)secondSocket.abort();if(secondToken!=null)SessionManager.unregisterSession(secondToken);
             if(socket!=null)socket.abort();if(token!=null)SessionManager.unregisterSession(token);
             if(Files.exists(root))try(var paths=Files.walk(root)){for(Path p:paths.sorted(Comparator.reverseOrder()).toList())Files.deleteIfExists(p);}
         }

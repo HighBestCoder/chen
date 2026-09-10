@@ -8,7 +8,7 @@ function load(file, extra = {}) {
   text = text.replace(/^import .*$/gm, '').replace('export default', 'module.exports =')
   const sandbox = { module: { exports: {} }, Subject, ReplaySubject, store, CodeMirror: {},
     Toolbar: {}, HotTable: {}, ExportDataDialog: {}, SelectSnippetDialog: {}, SaveSnippetDialog: {},
-    CodeEditor: {}, ResultBar: {}, DataView: {}, Log: {}, Message: {}, SplitPane: {}, format: x => x, formatMongoCommand: x => x,
+    InstanceDialog: {}, CodeEditor: {}, ResultBar: {}, DataView: {}, Log: {}, Message: {}, SplitPane: {}, format: x => x, formatMongoCommand: x => x,
     VueCookie: { get: () => '' }, commandModuleForDb: x => x, commandCommentForDb: () => '', looksSensitiveCommand: () => false,
     WebSocket: class { send() {} close() {} }, document: { location: { protocol: "http:" } }, window: { location: { host: "test" } },
     setTimeout, clearTimeout, setInterval, clearInterval, ...extra }

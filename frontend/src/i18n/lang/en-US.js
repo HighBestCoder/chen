@@ -1,6 +1,21 @@
 import el from 'element-ui/lib/locale/lang/en'
 
 const message = {
+  instance: {
+    "title": "Select instance / New console",
+    "help": "Select an authorized MongoDB or Cosmos DB Mongo API instance. A new page opens with an independent console, where you can select a database. Your current query is preserved.",
+    "asset": "Instance",
+    "account": "Authorized account",
+    "cancel": "Cancel",
+    "open": "Open new console",
+    "empty": "No authorized MongoDB / Cosmos DB Mongo API instances available.",
+    "no_account": "No account available for direct connection. Use the workbench if credentials or approval are required.",
+    "instance_org_required": "Organization context is missing. Reopen from the JumpServer workbench.",
+    "instance_login_required": "Sign in to the JumpServer workbench and retry.",
+    "instance_denied": "Connection denied or not approved. Check permissions; use the workbench for approval.",
+    "instance_failed": "Unable to load or connect. Retry and check permissions, login ACL and network.",
+    "instance_popup": "Allow popups for this site and retry."
+},
   title: {
     database_explorer: 'Database Explorer',
     save_sql: 'Save SQL',
