@@ -1,6 +1,21 @@
 import el from 'element-ui/lib/locale/lang/zh-CN'
 
 const message = {
+  instance: {
+    "title": "选择实例 / 新建控制台",
+    "help": "选择已授权的 MongoDB 或 Cosmos DB Mongo API 实例，在新页面打开独立控制台，再选择数据库。当前查询保留。",
+    "asset": "实例",
+    "account": "授权账号",
+    "cancel": "取消",
+    "open": "打开新控制台",
+    "empty": "没有可用的授权 MongoDB / Cosmos DB Mongo API 实例。",
+    "no_account": "没有可直接连接的授权账号。需要输入凭据或审批时，请从工作台连接。",
+    "instance_org_required": "缺少组织上下文，请从 JumpServer 工作台重新进入。",
+    "instance_login_required": "请先登录 JumpServer 工作台，再重试。",
+    "instance_denied": "无权连接或连接尚未获准，请检查授权；需要审批时请从工作台连接。",
+    "instance_failed": "无法加载或连接实例，请刷新重试；检查授权、登录 ACL 及网络。",
+    "instance_popup": "浏览器阻止了新页面，请允许弹出窗口后重试。"
+},
   title: {
     database_explorer: '数据库浏览器',
     save_sql: '保存SQL',

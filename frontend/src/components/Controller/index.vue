@@ -23,6 +23,7 @@
 </template>
 
 <script>
+import { consumeInstanceToken } from '@/api/instances'
 import { getUrlParams } from '@/utils/field'
 import { LunaEvent, MESSAGES } from '@/utils/luna'
 import { index } from '@/request'
@@ -71,6 +72,8 @@ export default {
 
     auth() {
       const params = getUrlParams(window.location.href)
+      const instanceToken = consumeInstanceToken()
+      if (instanceToken) params.token = instanceToken
       if (!Object.hasOwn(params, 'token')) {
         // 提示没有 token
         this.dialogOptions.title = 'Error'
