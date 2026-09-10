@@ -164,8 +164,8 @@ public class MongoQueryConsole extends AbstractConsole {
         try {
             DataView dataView = new DataView(command.getRawText(), this.getPacketIO(), this.getConsoleLogger());
             dataView.setSql(command.getRawText());
-            dataView.getStateManager().getState().setLimit(selectedLimit);
-            dataView.getStateManager().getState().setMaxDisplayLimit(1000);
+            dataView.getState().setMaxDisplayLimit(Math.min(1000, dataView.getState().getMaxDisplayLimit()));
+            dataView.getState().setLimit(Math.min(selectedLimit, dataView.getState().getMaxDisplayLimit()));
             MongoQueryLoader loader = new MongoQueryLoader(session, this.connectionManager,
                     this.actuator, command, aclResult, commandText);
             dataView.setLoadDataInterface((params, sink) -> {
