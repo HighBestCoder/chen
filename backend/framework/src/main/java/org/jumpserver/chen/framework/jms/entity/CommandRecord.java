@@ -9,6 +9,7 @@ import org.jumpserver.chen.wisp.Common;
 @Data
 public class CommandRecord {
 
+    private final long timestamp = System.currentTimeMillis() / 1000;
     private String input = "";
     private String output = "";
     private Common.RiskLevel riskLevel = Common.RiskLevel.Normal;

@@ -22,6 +22,7 @@ public class ReplayHandlerImpl implements ReplayHandler {
     private AsciinemaWriter replayWriter;
     private FileWriter fileWriter;
     private File file;
+    private boolean released;
 
     public ReplayHandlerImpl(Common.Session session, ServiceGrpc.ServiceBlockingStub serviceBlockingStub) {
         this.session = session;
@@ -42,11 +43,12 @@ public class ReplayHandlerImpl implements ReplayHandler {
             file.createNewFile();
 
             this.file = file;
-            this.fileWriter = new FileWriter(this.file);
+            this.fileWriter = new FileWriter(this.file, StandardCharsets.UTF_8);
             this.replayWriter = new AsciinemaWriter(this.fileWriter);
             this.replayWriter.writeHeader();
         } catch (Exception e) {
-            throw new ReplayException(this.file.getName(), "create replay file error:" + e.getMessage());
+            if (this.fileWriter != null) try { this.fileWriter.close(); } catch (IOException ignored) { }
+            throw new ReplayException(file.getName(), "create replay file error:" + e.getMessage());
         }
     }
 
@@ -60,22 +62,19 @@ public class ReplayHandlerImpl implements ReplayHandler {
 
     @Override
     public void release() throws ReplayException {
-        try {
-            this.writeRow("session closed \r\n");
-            this.fileWriter.close();
-            var req = ServiceOuterClass.ReplayRequest
-                    .newBuilder()
-                    .setSessionId(this.session.getId())
-                    .setReplayFilePath(this.file.getAbsolutePath())
-                    .build();
-
-            var resp = this.serviceBlockingStub.uploadReplayFile(req);
-            if (!resp.getStatus().getOk()) {
-                log.error("Upload replay file error: {}", resp.getStatus().getErr());
+        synchronized (lock) {
+            if (released || fileWriter == null) return;
+            released = true;
+            try {
+                this.fileWriter.close();
+            } catch (IOException e) {
+                throw new ReplayException(this.file.getName(), "close replay file error:" + e.getMessage());
             }
-        } catch (IOException e) {
-            throw new ReplayException(this.file.getName(), "close replay file error:" + e.getMessage());
         }
+        var req = ServiceOuterClass.ReplayRequest.newBuilder()
+                .setSessionId(this.session.getId()).setReplayFilePath(this.file.getAbsolutePath()).build();
+        var resp = this.serviceBlockingStub.withDeadlineAfter(30, java.util.concurrent.TimeUnit.SECONDS).uploadReplayFile(req);
+        if (!resp.getStatus().getOk()) throw new ReplayException(this.file.getName(), "upload failed: " + resp.getStatus().getErr());
     }
 
     private final Object lock = new Object();
@@ -83,6 +82,8 @@ public class ReplayHandlerImpl implements ReplayHandler {
     @Override
     public void writeRow(String row) {
         synchronized (lock) {
+            if (released || replayWriter == null) return;
+            row = row == null ? "" : row;
             row = row.replaceAll("\n", "\r\n");
             row = row.replaceAll("\r\r\n", "\r\n");
             var content = String.format("%s \r\n", row);
@@ -102,7 +103,8 @@ public class ReplayHandlerImpl implements ReplayHandler {
             } catch (IOException e) {
                 log.error("write replay row failed: {}", e.getMessage(), e);
             } catch (InterruptedException e) {
-                throw new RuntimeException(e);
+                Thread.currentThread().interrupt();
+                return;
             }
         }
     }

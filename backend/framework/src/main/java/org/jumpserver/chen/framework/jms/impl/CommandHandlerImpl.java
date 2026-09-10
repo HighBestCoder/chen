@@ -8,7 +8,6 @@ import org.jumpserver.chen.framework.jms.entity.CommandRecord;
 import org.jumpserver.chen.wisp.Common;
 import org.jumpserver.chen.wisp.ServiceGrpc;
 import org.jumpserver.chen.wisp.ServiceOuterClass;
-import org.springframework.scheduling.annotation.Async;
 
 @Slf4j
 public class CommandHandlerImpl implements CommandHandler {
@@ -22,7 +21,6 @@ public class CommandHandlerImpl implements CommandHandler {
     }
 
     @Override
-    @Async
     public void recordCommand(CommandRecord commandRecord) {
 
         // task-19: carry ACL risk metadata (matched / action / ticket) into the
@@ -51,6 +49,9 @@ public class CommandHandlerImpl implements CommandHandler {
             }
         }
 
+        if (stats == null) stats = new ExecutionStats();
+        if (stats.getRawCommand() == null) stats.setRawCommand(commandRecord.getInput());
+        if (commandRecord.isError()) stats.setSuccess(false);
         String output = ExecutionStatsEnvelope.appendTo(
                 commandRecord.getOutput(),
                 stats
@@ -63,7 +64,7 @@ public class CommandHandlerImpl implements CommandHandler {
                 .setAsset(this.session.getAsset())
                 .setAccount(this.session.getAccount())
                 .setUser(this.session.getUser())
-                .setTimestamp(System.currentTimeMillis() / 1000)
+                .setTimestamp(commandRecord.getTimestamp())
                 .setInput(commandRecord.getInput())
                 .setOutput(output)
                 .setRiskLevel(commandRecord.getRiskLevel());
@@ -73,12 +74,11 @@ public class CommandHandlerImpl implements CommandHandler {
             reqBuilder.setCmdGroupId(commandRecord.getCmdGroupId());
         }
 
-        // Audit upload runs @Async, so a failure cannot surface as a user-visible
-        // error on the query itself. Per the task-14 honesty boundary we do not
-        // silently swallow it: log loudly so the Chen->Wisp->Core loss window is
-        // observable. We do not block or retry the user's command here.
+        // This handler is constructed directly, not through an async Spring proxy.
+        // Bound transport latency and report failure without retrying a write whose
+        // outcome may be unknown (Core has no upload idempotency key).
         try {
-            var resp = this.serviceBlockingStub.uploadCommand(reqBuilder.build());
+            var resp = this.serviceBlockingStub.withDeadlineAfter(15, java.util.concurrent.TimeUnit.SECONDS).uploadCommand(reqBuilder.build());
             if (!resp.getStatus().getOk()) {
                 log.error("upload command failed (audit may be lost): {}", resp.getStatus().getErr());
             }

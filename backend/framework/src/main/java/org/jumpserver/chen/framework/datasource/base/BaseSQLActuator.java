@@ -278,6 +278,7 @@ public abstract class BaseSQLActuator implements SQLActuator {
                 boolean statsOk = true;
                 String statsReason = null;
                 Map<String, Long> sizeByColumn = new LinkedHashMap<>();
+                for (String key : columnKeys.getKeys()) sizeByColumn.put(key, 0L);
                 boolean columnStatsOk = true;
                 String columnStatsReason = columnKeys.getUnavailableReason();
 
@@ -502,7 +503,9 @@ public abstract class BaseSQLActuator implements SQLActuator {
     public SQLQueryResult executeWithAudit(SQLExecutePlan plan) throws SQLException {
         var sess = SessionManager.getCurrentSession();
         try {
-            return sess.withAudit(plan.getTargetSQL(), () -> this.execute(plan));
+            String namespace = null;
+            try { if (plan.getConnection() != null) namespace = plan.getConnection().getCatalog(); } catch (SQLException ignored) { }
+            return sess.withAudit(plan.getSourceSQL(), namespace, () -> this.execute(plan));
         } catch (CommandRejectException e) {
             throw new SQLException(e.getMessage());
         }

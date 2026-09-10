@@ -73,6 +73,10 @@ public interface Session {
     // 在有审计的情况下执行命令
     SQLQueryResult withAudit(String command, QueryAuditFunction queryAuditFunction) throws SQLException, CommandRejectException;
 
+    default SQLQueryResult withAudit(String command, String namespace, QueryAuditFunction action) throws SQLException, CommandRejectException {
+        return withAudit(command, action);
+    }
+
     void recordCommand(String command);
 
     void recordCommand(CommandRecord commandRecord);

@@ -271,6 +271,8 @@ public class QueryConsole extends AbstractConsole {
                     CommandRecord commandRecord = new CommandRecord(sql);
                     commandRecord.applyACL(aclResult);
                     commandRecord.setError(aclResult.denialMessage());
+                    commandRecord.setExecutionStats(SqlExecutionStatsBuilder.fromFailure(this.datasource, sql,
+                            new SQLException(aclResult.denialMessage())));
                     session.recordCommand(commandRecord);
 
                     this.getState().setInQuery(false);

@@ -5,8 +5,6 @@ import com.alibaba.fastjson.JSONObject;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.Optional;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Wire envelope that piggybacks {@link ExecutionStats} on the existing
@@ -34,9 +32,6 @@ public final class ExecutionStatsEnvelope {
 
     public static final String OPEN_TAG = "[[CHEN_EXEC_STATS_V1]]";
     public static final String CLOSE_TAG = "[[/CHEN_EXEC_STATS_V1]]";
-
-    private static final Pattern ENVELOPE_PATTERN =
-            Pattern.compile(Pattern.quote(OPEN_TAG) + "(.*?)" + Pattern.quote(CLOSE_TAG), Pattern.DOTALL);
 
     private ExecutionStatsEnvelope() {
     }
@@ -70,18 +65,23 @@ public final class ExecutionStatsEnvelope {
         if (enveloped == null || enveloped.isEmpty()) {
             return Optional.empty();
         }
-        Matcher m = ENVELOPE_PATTERN.matcher(enveloped);
-        if (!m.find()) {
-            return Optional.empty();
+        int start = envelopeStart(enveloped);
+        if (start < 0) return Optional.empty();
+        String json = enveloped.substring(start + OPEN_TAG.length(), enveloped.length() - CLOSE_TAG.length());
+        try { return Optional.ofNullable(JSON.toJavaObject(JSON.parseObject(json), ExecutionStats.class)); }
+        catch (RuntimeException invalid) { return Optional.empty(); }
+    }
+
+    private static int envelopeStart(String text) {
+        if (text == null || !text.endsWith(CLOSE_TAG)) return -1;
+        int end = text.length() - CLOSE_TAG.length();
+        for (int start = text.lastIndexOf(OPEN_TAG, end - 1); start >= 0; start = text.lastIndexOf(OPEN_TAG, start - 1)) {
+            try {
+                String json = text.substring(start + OPEN_TAG.length(), end);
+                if (json.stripLeading().startsWith("{") && JSON.parseObject(json) != null) return start;
+            } catch (RuntimeException ignored) { }
         }
-        String json = m.group(1);
-        try {
-            JSONObject obj = JSON.parseObject(json);
-            return Optional.ofNullable(JSON.toJavaObject(obj, ExecutionStats.class));
-        } catch (Throwable t) {
-            log.warn("ExecutionStatsEnvelope: failed to decode stats payload", t);
-            return Optional.empty();
-        }
+        return -1;
     }
 
     /**
@@ -93,15 +93,9 @@ public final class ExecutionStatsEnvelope {
         if (enveloped == null || enveloped.isEmpty()) {
             return enveloped;
         }
-        Matcher m = ENVELOPE_PATTERN.matcher(enveloped);
-        if (!m.find()) {
-            return enveloped;
-        }
-        String stripped = m.replaceAll("");
-        // Drop the trailing newline we inserted before the envelope.
-        if (stripped.endsWith("\n")) {
-            stripped = stripped.substring(0, stripped.length() - 1);
-        }
-        return stripped;
+        int start = envelopeStart(enveloped);
+        if (start < 0) return enveloped;
+        if (start > 0 && enveloped.charAt(start - 1) == '\n') start--;
+        return enveloped.substring(0, start);
     }
 }
