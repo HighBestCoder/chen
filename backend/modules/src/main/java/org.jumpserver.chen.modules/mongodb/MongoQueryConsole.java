@@ -195,7 +195,7 @@ public class MongoQueryConsole extends AbstractConsole {
             log.warn("Mongo command execution failed: user={} opType={} command={} error={}",
                     session.getUsername(), command.getType(), commandText, e.toString());
             this.getConsoleLogger().error("execute error: %s", e.getMessage());
-            this.getPacketIO().sendPacket("message", Message.error("Execute error", e.getMessage()));
+            this.getPacketIO().sendPacket("message", Message.error("Execute error", e));
         }
     }
 
@@ -224,7 +224,7 @@ public class MongoQueryConsole extends AbstractConsole {
             selectedLimit = dataView.getStateManager().getState().getLimit();
             this.getPacketIO().sendPacket("update_data_view", new UpdateDataView(action.getDataView(), dataView.getData()));
         } catch (Exception e) {
-            this.getMessager().send(Message.error("Fetch error", e.getMessage()));
+            this.getMessager().send(Message.error("Fetch error", e));
         } finally {
             dataView.getStateManager().getState().setLoading(false);
             dataView.getStateManager().commit();

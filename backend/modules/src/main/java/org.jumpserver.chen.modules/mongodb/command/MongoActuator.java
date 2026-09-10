@@ -39,6 +39,7 @@ public class MongoActuator {
     }
 
     public SQLQueryResult execute(MongoCommand command, int offset, int limit) {
+        try {
         return switch (command.getType()) {
             case SCRIPT -> MongoScriptRunner.execute(command,connectionManager,org.jumpserver.chen.framework.session.SessionManager.getCurrentSession(),limit);
             case COMMAND -> executeDatabaseCommand(command,limit);
@@ -58,6 +59,11 @@ public class MongoActuator {
             case DELETE -> executeDelete(command);
             case DROP_COLLECTION -> executeDrop(command);
         };
+        } catch (RuntimeException error) {
+            if (org.jumpserver.chen.modules.mongodb.MongoPermissionErrorClassifier.isPermissionDenied(error))
+                throw new org.jumpserver.chen.framework.datasource.error.OperationPermissionDeniedException(error);
+            throw error;
+        }
     }
 
     private SQLQueryResult unacknowledged(MongoCommand command,long start) {

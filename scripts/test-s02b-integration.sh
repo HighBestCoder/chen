@@ -25,6 +25,10 @@ for name in server client; do
   openssl req -newkey rsa:2048 -nodes -keyout "$fixture_dir/$name.key" -out "$fixture_dir/$name.csr" -subj "/CN=$cn" >/dev/null 2>&1
   openssl x509 -req -in "$fixture_dir/$name.csr" -CA "$fixture_dir/ca.crt" -CAkey "$fixture_dir/ca.key" -CAcreateserial -out "$fixture_dir/$name.crt" -days 2 -extfile "$fixture_dir/$name.ext" >/dev/null 2>&1
 done
+if [[ "${CHEN_INTEGRATION_MAIN:-}" == TestU05PermissionIntegration ]]; then
+  openssl req -newkey rsa:2048 -nodes -keyout "$fixture_dir/u05-reader.key" -out "$fixture_dir/u05-reader.csr" -subj '/CN=u05_reader' >/dev/null 2>&1
+  openssl x509 -req -in "$fixture_dir/u05-reader.csr" -CA "$fixture_dir/ca.crt" -CAkey "$fixture_dir/ca.key" -CAcreateserial -out "$fixture_dir/u05-reader.crt" -days 2 -extfile "$fixture_dir/client.ext" >/dev/null 2>&1
+fi
 cat "$fixture_dir/server.crt" "$fixture_dir/server.key" > "$fixture_dir/server.pem"
 # Keys belong only to this disposable fixture. PG requires private key mode 0600.
 chmod 755 "$fixture_dir"
@@ -41,6 +45,9 @@ cat > "$fixture_dir/mysql-init.sql" <<'SQL'
 ALTER USER 'fixture'@'%' REQUIRE X509;
 GRANT ALL ON *.* TO 'fixture'@'%';
 SQL
+if [[ "${CHEN_INTEGRATION_MAIN:-}" == TestU05PermissionIntegration ]]; then
+  printf '%s\n' "GRANT ALL ON *.* TO 'fixture'@'%' WITH GRANT OPTION;" >> "$fixture_dir/mysql-init.sql"
+fi
 cat > "$fixture_dir/mssql.conf" <<'CONF'
 [network]
 tlscert = /fixtures/server.crt
