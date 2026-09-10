@@ -15,6 +15,10 @@ import java.util.List;
 import java.util.Map;
 
 public class MongoResultTableAdapter {
+    private final java.util.function.Consumer<List<Document>> observer;
+    public MongoResultTableAdapter() {this(null);}
+    public MongoResultTableAdapter(java.util.function.Consumer<List<Document>> observer) {this.observer=observer;}
+
 
     private static final JsonWriterSettings RELAXED =
             JsonWriterSettings.builder().outputMode(JsonMode.RELAXED).build();
@@ -35,6 +39,7 @@ public class MongoResultTableAdapter {
 
     public SQLQueryResult toResult(String sql, String collection, List<Document> documents, Document projection,
                                    long startMillis, long queryDoneMillis, long total, boolean paged) {
+        if(observer!=null)observer.accept(documents);
         SQLQueryResult result = new SQLQueryResult(sql);
 
         List<String> keys = MongoFieldPathExtractor.fieldPaths(projection, documents);

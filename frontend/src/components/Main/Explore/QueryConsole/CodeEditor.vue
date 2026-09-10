@@ -94,7 +94,8 @@ const modeMap = {
 const mongoKeywords = [
   'db', 'getCollection', 'find', 'findOne', 'countDocuments', 'distinct', 'skip', 'aggregate',
   'insertOne', 'insertMany', 'updateOne', 'updateMany', 'deleteOne', 'deleteMany', 'drop',
-  'show dbs', 'show collections', 'use', 'limit', 'sort', 'ISODate'
+  'show dbs', 'show collections', 'use', 'limit', 'sort', 'ISODate',
+  'hint', 'collation', 'maxTimeMS', 'batchSize', 'replaceOne', 'findOneAndUpdate', 'findOneAndReplace', 'findOneAndDelete', 'bulkWrite', 'createIndex', 'getIndexes', 'dropIndex', 'runCommand', 'createCollection', 'dropDatabase', 'stats', 'getSiblingDB', 'toArray', 'forEach', 'map', 'hasNext', 'next', 'ObjectId', 'NumberLong', 'NumberDecimal', 'BinData', 'print', 'printjson'
 ]
 
 export default {

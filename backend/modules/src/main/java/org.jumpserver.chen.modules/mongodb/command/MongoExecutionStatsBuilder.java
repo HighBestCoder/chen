@@ -25,6 +25,10 @@ public final class MongoExecutionStatsBuilder {
     public static ExecutionStats fromSuccess(MongoConnectionManager cm, MongoCommand command, SQLQueryResult result) {
         ExecutionStats stats = baseStats(cm, command);
         stats.setSuccess(Boolean.TRUE);
+        org.bson.Document options = command.getType() == MongoCommand.Type.COMMAND ? command.getDatabaseCommand() : command.getOptions();
+        if(options.containsKey("writeConcern") && !MongoOptions.writeConcern(options.get("writeConcern",org.bson.Document.class)).isAcknowledged()) {
+            stats.setSuccess(null);stats.putExtra("write_acknowledged",false);
+        }
         if (result == null) {
             return stats;
         }
@@ -131,6 +135,12 @@ public final class MongoExecutionStatsBuilder {
     public static ExecutionStats fromFailure(MongoConnectionManager cm, MongoCommand command, Throwable error) {
         ExecutionStats stats = baseStats(cm, command);
         stats.setSuccess(Boolean.FALSE);
+        if (error instanceof com.mongodb.MongoBulkWriteException bulk && bulk.getWriteResult().wasAcknowledged()) {
+            var partial = bulk.getWriteResult();
+            stats.setAffectedRows((long) partial.getInsertedCount() + partial.getModifiedCount() + partial.getDeletedCount() + partial.getUpserts().size());
+            stats.putExtra("partial_write", true);
+            stats.putExtra("write_error_indices", bulk.getWriteErrors().stream().map(com.mongodb.bulk.BulkWriteError::getIndex).toList());
+        }
         if (error != null) {
             String errorType = error.getClass().getSimpleName();
             stats.setErrorMessage(errorType);
@@ -175,6 +185,16 @@ public final class MongoExecutionStatsBuilder {
             return "OTHER";
         }
         return switch (type) {
+            case SCRIPT -> "SCRIPT";
+            case COMMAND -> "COMMAND";
+            case REPLACE -> "REPLACE";
+            case FIND_AND_UPDATE -> "FIND_AND_UPDATE";
+            case FIND_AND_REPLACE -> "FIND_AND_REPLACE";
+            case FIND_AND_DELETE -> "FIND_AND_DELETE";
+            case BULK_WRITE -> "BULK_WRITE";
+            case CREATE_INDEX -> "CREATE_INDEX";
+            case LIST_INDEXES -> "LIST_INDEXES";
+            case DROP_INDEX -> "DROP_INDEX";
             case FIND -> "FIND";
             case FIND_ONE -> "FIND_ONE";
             case COUNT -> "COUNT";
