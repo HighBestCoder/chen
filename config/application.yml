@@ -34,3 +34,8 @@ grpc:
 #  max-timeout-seconds: 300
 #  export-max-rows: 100000
 #  console-limit-options: [50, 100, 500, 5000, 50000]
+
+# Empty by default: direct clients cannot forge session/audit source IP.
+# Set CHEN_TRUSTED_PROXIES to the exact comma-separated proxy peer IPs.
+chen:
+  trusted-proxies: ${CHEN_TRUSTED_PROXIES:}

@@ -9,7 +9,7 @@ RUN set -ex \
 WORKDIR /opt/chen/frontend
 ADD frontend/package.json frontend/yarn.lock .
 RUN --mount=type=cache,target=/usr/local/share/.cache/yarn,sharing=locked,id=chen \
-    yarn install
+    yarn install --frozen-lockfile
 
 ADD frontend .
 RUN --mount=type=cache,target=/usr/local/share/.cache/yarn,sharing=locked,id=chen \
@@ -50,8 +50,6 @@ ARG DEPENDENCIES="                    \
 ARG APT_MIRROR=http://mirrors.ustc.edu.cn
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=chen \
     sed -i "s@http://.*.debian.org@${APT_MIRROR}@g" /etc/apt/sources.list \
-    && sed -i "s@jdk.tls.disabledAlgorithms=SSLv3, TLSv1, TLSv1.1@jdk.tls.disabledAlgorithms=SSLv3@" /opt/java/openjdk/conf/security/java.security \
-    || sed -i "s@jdk.tls.disabledAlgorithms=SSLv3, TLSv1, TLSv1.1@jdk.tls.disabledAlgorithms=SSLv3@" /usr/local/openjdk-17/conf/security/java.security \
     && rm -f /etc/apt/apt.conf.d/docker-clean \
     && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
     && apt-get update \
@@ -80,6 +78,8 @@ COPY --from=stage-chen-build /opt/chen/config/application.yml /opt/chen/config/a
 COPY --from=stage-chen-build /opt/chen/config/logback.xml /opt/chen/config/logback.xml
 
 ARG VERSION
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.revision=$VCS_REF
 ENV VERSION=$VERSION
 
 EXPOSE 8082

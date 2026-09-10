@@ -19,7 +19,7 @@ jobs:
         id: get_version
         run: |
           TAG=$(basename ${GITHUB_REF})
-          echo "::set-output name=TAG::$TAG"
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
       - name: Create Release
         id: create_release
         uses: release-drafter/release-drafter@v5
@@ -35,7 +35,7 @@ jobs:
       - name: Build web
         run: |
           cd frontend
-          yarn install
+          yarn install --frozen-lockfile
           yarn build
       - uses: actions/setup-java@v3
         with:
@@ -47,10 +47,11 @@ jobs:
           mkdir -p build chen-${{ steps.get_version.outputs.TAG }}
           rm -f config/application-dev.yml
           mv backend/web/target/web-*.jar chen-${{ steps.get_version.outputs.TAG }}/chen.jar
+          cp entrypoint.sh chen-${{ steps.get_version.outputs.TAG }}/entrypoint.sh
           mv drivers chen-${{ steps.get_version.outputs.TAG }}/drivers
           mv config chen-${{ steps.get_version.outputs.TAG }}/config
           tar -zcvf chen-${{ steps.get_version.outputs.TAG }}.tar.gz chen-${{ steps.get_version.outputs.TAG }}
-          echo $(md5sum chen-${{ steps.get_version.outputs.TAG }}.tar.gz | awk '{print $1}') > build/chen-${{ steps.get_version.outputs.TAG }}.tar.gz.md5
+          sha256sum chen-${{ steps.get_version.outputs.TAG }}.tar.gz > build/chen-${{ steps.get_version.outputs.TAG }}.tar.gz.sha256
           mv chen-${{ steps.get_version.outputs.TAG }}.tar.gz build/
       - name: Release Upload Assets
         uses: softprops/action-gh-release@v1
@@ -59,6 +60,6 @@ jobs:
           draft: true
           files: |
             build/chen-${{ steps.get_version.outputs.TAG }}.tar.gz
-            build/chen-${{ steps.get_version.outputs.TAG }}.tar.gz.md5
+            build/chen-${{ steps.get_version.outputs.TAG }}.tar.gz.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

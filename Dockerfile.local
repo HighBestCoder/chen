@@ -17,7 +17,7 @@ RUN set -ex \
 WORKDIR /opt/chen/frontend
 ADD frontend/package.json frontend/yarn.lock .
 RUN --mount=type=cache,target=/usr/local/share/.cache/yarn,sharing=locked,id=chen \
-    yarn install
+    yarn install --frozen-lockfile
 
 ADD frontend .
 RUN --mount=type=cache,target=/usr/local/share/.cache/yarn,sharing=locked,id=chen \
@@ -47,6 +47,12 @@ RUN chmod +x entrypoint.sh
 
 FROM ${RUNTIME_BASE_IMAGE}
 ARG TARGETARCH
+# COPY merges directories; remove stock driver versions before installing this release.
+RUN set -eu; \
+    rm -rf /opt/chen/drivers; \
+    security_file="${JAVA_HOME}/conf/security/java.security"; \
+    test -f "$security_file"; \
+    sed -i 's/^jdk.tls.disabledAlgorithms=/jdk.tls.disabledAlgorithms=TLSv1, TLSv1.1, /' "$security_file"
 
 WORKDIR /opt/chen
 
@@ -57,6 +63,8 @@ COPY --from=stage-chen-build /opt/chen/config/application.yml /opt/chen/config/a
 COPY --from=stage-chen-build /opt/chen/config/logback.xml /opt/chen/config/logback.xml
 
 ARG VERSION
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.revision=$VCS_REF
 ENV VERSION=$VERSION
 
 EXPOSE 8082
