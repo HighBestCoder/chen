@@ -147,6 +147,9 @@ public class JMSSession extends BaseSession {
     }
 
     @Override
+    public void beginCommand(CommandRecord record) { this.commandHandler.beginCommand(record); }
+
+    @Override
     public void recordCommand(CommandRecord commandRecord) {
         if (allowsExecution()) this.lastActiveTime = System.currentTimeMillis();
         this.commandHandler.recordCommand(commandRecord);
@@ -316,6 +319,7 @@ public class JMSSession extends BaseSession {
         }
 
         CommandRecord commandRecord = new CommandRecord(command);
+        this.beginCommand(commandRecord);
 
         try {
             this.replayHandler.writeInput(commandRecord.getInput());

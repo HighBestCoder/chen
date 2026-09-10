@@ -9,6 +9,7 @@ import org.jumpserver.chen.wisp.Common;
 @Data
 public class CommandRecord {
 
+    private final String auditId = java.util.UUID.randomUUID().toString();
     private final long timestamp = System.currentTimeMillis() / 1000;
     private String input = "";
     private String output = "";

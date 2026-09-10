@@ -100,6 +100,7 @@ public class MongoSqlActuatorStub implements SQLActuator {
         CommandRecord record = new CommandRecord(plan.getTargetSQL());
         record.applyACL(plan.getAclResult());
         MongoCommand command = commandFromPlan(plan);
+        SessionManager.getCurrentSession().beginCommand(record);
         try {
             SQLQueryResult result = execute(plan);
             record.setOutput(result);

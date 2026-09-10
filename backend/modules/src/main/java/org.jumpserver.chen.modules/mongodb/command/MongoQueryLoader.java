@@ -38,8 +38,9 @@ public final class MongoQueryLoader implements LoadDataInterface {
     @Override
     public SQLQueryResult loadData(SQLQueryParams params, RowConsumer sink) throws SQLException {
         String previous = manager.getCurrentDatabaseName();
-        manager.setDatabaseContext(database);
         CommandRecord record = new CommandRecord(commandText);
+        session.beginCommand(record);
+        manager.setDatabaseContext(database);
         try {
             boolean initial = firstLoad;
             firstLoad = false;

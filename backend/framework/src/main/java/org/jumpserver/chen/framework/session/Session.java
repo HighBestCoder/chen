@@ -77,6 +77,8 @@ public interface Session {
         return withAudit(command, action);
     }
 
+    default void beginCommand(CommandRecord record) { }
+
     void recordCommand(String command);
 
     void recordCommand(CommandRecord commandRecord);
