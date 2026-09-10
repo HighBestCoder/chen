@@ -31,9 +31,9 @@ public class MongoCommandParser {
 
     private static final Pattern CALL = Pattern.compile(
             "^db\\.([A-Za-z0-9_.$-]+)\\.([A-Za-z][A-Za-z0-9]*)\\s*\\(");
-    private static final Pattern MODIFIER = Pattern.compile("^\\.(sort|limit)\\s*\\(");
+    private static final Pattern MODIFIER = Pattern.compile("^\\.(sort|limit|skip)\\s*\\(");
     private static final String ALLOWED =
-            "Allowed: find / aggregate / insertOne / insertMany / updateOne / updateMany"
+            "Allowed: getCollection / find / findOne / countDocuments / distinct / aggregate / insertOne / insertMany / updateOne / updateMany"
                     + " / deleteOne / deleteMany / drop / show dbs / show collections / use <db>";
 
     public MongoCommand parse(String input) {
@@ -65,20 +65,34 @@ public class MongoCommandParser {
     }
 
     private MongoCommand parseCall(String text) {
-        Matcher callMatcher = CALL.matcher(text);
+        String callText = text;
+        String selectedCollection = null;
+        Matcher selector = Pattern.compile("^db\\.getCollection\\s*\\(").matcher(text);
+        if (selector.find()) {
+            int close = closingParenthesis(text, selector.end() - 1);
+            List<String> names = splitTopLevelArgs(text.substring(selector.end(), close));
+            if (names.size() != 1) throw new MongoCommandException("getCollection requires one string name");
+            selectedCollection = parseString(names.get(0), "collection");
+            callText = "db.__selected__" + text.substring(close + 1).trim();
+        }
+        Matcher callMatcher = CALL.matcher(callText);
         if (!callMatcher.find()) {
             throw new MongoCommandException("Unsupported command. " + ALLOWED);
         }
-        String collection = callMatcher.group(1);
+        if (selectedCollection != null && !callMatcher.group(1).equals("__selected__")) {
+            throw new MongoCommandException("getCollection must be followed directly by a supported method");
+        }
+        String collection = selectedCollection == null ? callMatcher.group(1) : selectedCollection;
         String op = callMatcher.group(2);
         if (op.equalsIgnoreCase("mapReduce") || op.equalsIgnoreCase("eval")) {
             throw new MongoCommandException("Operator not allowed in restricted console: " + op);
         }
-        int end = closingParenthesis(text, callMatcher.end() - 1);
-        List<String> args = splitTopLevelArgs(text.substring(callMatcher.end(), end).trim());
-        String remaining = text.substring(end + 1).trim();
+        int end = closingParenthesis(callText, callMatcher.end() - 1);
+        List<String> args = splitTopLevelArgs(callText.substring(callMatcher.end(), end).trim());
+        String remaining = callText.substring(end + 1).trim();
         Integer limit = null;
         Document sort = null;
+        Integer skip = null;
         while (!remaining.isEmpty()) {
             Matcher modifier = MODIFIER.matcher(remaining);
             if (!modifier.find()) {
@@ -92,6 +106,9 @@ public class MongoCommandParser {
                     throw new MongoCommandException("sort is only supported once on find");
                 }
                 sort = parseJson(value, "sort");
+            } else if (name.equals("skip")) {
+                if (!op.equals("find") || skip != null) throw new MongoCommandException("skip is only supported once on find");
+                skip = nonNegativeInteger(parseValue(value), "skip");
             } else {
                 if (!(op.equals("find") || op.equals("aggregate")) || limit != null) {
                     throw new MongoCommandException("limit is only supported once on find or aggregate");
@@ -109,7 +126,10 @@ public class MongoCommandParser {
         }
 
         return switch (op) {
-            case "find" -> buildFind(text, collection, args, sort, limit);
+            case "find" -> buildFind(text, collection, args, sort, limit).withSkip(skip == null ? 0 : skip);
+            case "findOne" -> buildFindOne(text, collection, args);
+            case "countDocuments" -> buildCount(text, collection, args);
+            case "distinct" -> buildDistinct(text, collection, args);
             case "aggregate" -> buildAggregate(text, collection, args, limit);
             case "insertOne" -> buildInsert(text, collection, args, false);
             case "insertMany" -> buildInsert(text, collection, args, true);
@@ -135,7 +155,7 @@ public class MongoCommandParser {
         if (args.isEmpty()) {
             throw new MongoCommandException("aggregate(pipeline) requires a pipeline array");
         }
-        requireAtMost(args, 1, "aggregate(pipeline)");
+        requireAtMost(args, 2, "aggregate(pipeline, options)");
         List<Document> pipeline = parseDocumentArray(args.get(0), "pipeline");
         if (pipeline.stream().anyMatch(stage -> stage == null)) {
             throw new MongoCommandException("Invalid pipeline array: null stage");
@@ -146,7 +166,7 @@ public class MongoCommandParser {
                 throw new MongoCommandException("limit cannot follow a terminal $out or $merge stage");
             }
         }
-        return MongoCommand.aggregate(text, collection, pipeline, limit);
+        return MongoCommand.aggregate(text, collection, pipeline, limit).withOptions(options(args, 1, "allowDiskUse", "maxTimeMS"));
     }
 
     private MongoCommand buildInsert(String text, String collection, List<String> args, boolean many) {
@@ -154,14 +174,14 @@ public class MongoCommandParser {
         if (args.isEmpty()) {
             throw new MongoCommandException(shape + " requires a document argument");
         }
-        requireAtMost(args, 1, shape);
+        requireAtMost(args, many ? 2 : 1, shape);
         List<Document> documents = many
                 ? parseDocumentArray(args.get(0), "documents")
                 : List.of(parseJson(args.get(0), "document"));
         if (documents.isEmpty()) {
             throw new MongoCommandException(shape + " requires at least one document");
         }
-        return MongoCommand.insert(text, collection, documents);
+        return MongoCommand.insert(text, collection, documents).withOptions(options(args, 1, "ordered"));
     }
 
     private MongoCommand buildUpdate(String text, String collection, List<String> args, boolean multi) {
@@ -169,13 +189,13 @@ public class MongoCommandParser {
         if (args.size() < 2) {
             throw new MongoCommandException(shape + " requires both a filter and an update document");
         }
-        requireAtMost(args, 2, shape);
+        requireAtMost(args, 3, shape);
         Document filter = parseJson(args.get(0), "filter");
         Document update = parseJson(args.get(1), "update");
         if (update.isEmpty()) {
             throw new MongoCommandException(shape + " requires a non-empty update document");
         }
-        return MongoCommand.update(text, collection, filter, update, multi);
+        return MongoCommand.update(text, collection, filter, update, multi).withOptions(options(args, 2, "upsert", "arrayFilters"));
     }
 
     private MongoCommand buildDelete(String text, String collection, List<String> args, boolean multi) {
@@ -192,6 +212,68 @@ public class MongoCommandParser {
             throw new MongoCommandException("drop() does not take arguments");
         }
         return MongoCommand.dropCollection(text, collection);
+    }
+
+    private MongoCommand buildFindOne(String text, String collection, List<String> args) {
+        requireAtMost(args, 3, "findOne(filter, projection, options)");
+        return MongoCommand.read(MongoCommand.Type.FIND_ONE, text, collection,
+                args.isEmpty() ? new Document() : parseJson(args.get(0), "filter"),
+                args.size() < 2 ? null : parseJson(args.get(1), "projection"), null)
+                .withOptions(options(args, 2, "sort", "maxTimeMS"));
+    }
+
+    private MongoCommand buildCount(String text, String collection, List<String> args) {
+        requireAtMost(args, 2, "countDocuments(filter, options)");
+        return MongoCommand.read(MongoCommand.Type.COUNT, text, collection,
+                args.isEmpty() ? new Document() : parseJson(args.get(0), "filter"), null, null)
+                .withOptions(options(args, 1, "skip", "limit", "maxTimeMS"));
+    }
+
+    private MongoCommand buildDistinct(String text, String collection, List<String> args) {
+        if (args.isEmpty()) throw new MongoCommandException("distinct requires a field name");
+        requireAtMost(args, 2, "distinct(field, filter)");
+        return MongoCommand.read(MongoCommand.Type.DISTINCT, text, collection,
+                args.size() < 2 ? new Document() : parseJson(args.get(1), "filter"), null,
+                parseString(args.get(0), "field"));
+    }
+
+    private Object parseValue(String text) {
+        if (splitTopLevelArgs(text).size() != 1) throw new MongoCommandException("Expected one BSON value");
+        try { return parseCompleteDocument("{value:" + text + "}").get("value"); }
+        catch (RuntimeException e) { throw new MongoCommandException("Invalid BSON value"); }
+    }
+
+    private String parseString(String text, String label) {
+        Object value = parseValue(text);
+        if (!(value instanceof String s) || s.isEmpty() || s.indexOf('\0') >= 0)
+            throw new MongoCommandException("Expected a non-empty " + label + " string");
+        return (String) value;
+    }
+
+    private int nonNegativeInteger(Object value, String label) {
+        if (!(value instanceof Integer || value instanceof Long) || ((Number) value).longValue() < 0
+                || ((Number) value).longValue() > Integer.MAX_VALUE)
+            throw new MongoCommandException(label + " must be an integer from 0 to 2147483647");
+        return ((Number) value).intValue();
+    }
+
+    private Document options(List<String> args, int index, String... allowed) {
+        if (args.size() <= index) return new Document();
+        Document options = parseJson(args.get(index), "options");
+        for (var entry : options.entrySet()) {
+            String key = entry.getKey(); Object value = entry.getValue();
+            if (!java.util.Set.of(allowed).contains(key)) throw new MongoCommandException("Unsupported option: " + key);
+            switch (key) {
+                case "skip", "limit", "maxTimeMS" -> entry.setValue(nonNegativeInteger(value, key));
+                case "sort" -> { if (!(value instanceof Document)) throw new MongoCommandException("sort must be a document"); }
+                case "arrayFilters" -> {
+                    if (!(value instanceof List<?> list) || list.stream().anyMatch(v -> !(v instanceof Document)))
+                        throw new MongoCommandException("arrayFilters must be an array of documents");
+                }
+                default -> { if (!(value instanceof Boolean)) throw new MongoCommandException(key + " must be boolean"); }
+            }
+        }
+        return options;
     }
 
     private void requireAtMost(List<String> args, int max, String shape) {

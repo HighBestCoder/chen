@@ -10,6 +10,9 @@ public class MongoCommand {
 
     public enum Type {
         FIND,
+        FIND_ONE,
+        COUNT,
+        DISTINCT,
         AGGREGATE,
         SHOW_DBS,
         SHOW_COLLECTIONS,
@@ -32,6 +35,22 @@ public class MongoCommand {
     private List<Document> documents;
     private Document update;
     private boolean multi;
+    private int skip;
+    private String distinctField;
+    private Document options = new Document();
+
+    public MongoCommand withOptions(Document options) { this.options = options; return this; }
+    public MongoCommand withSkip(int skip) { this.skip = skip; return this; }
+
+    public static MongoCommand read(Type type, String text, String collection, Document filter,
+                                    Document projection, String field) {
+        MongoCommand c = new MongoCommand(type, text);
+        c.collection = collection;
+        c.filter = filter;
+        c.projection = projection;
+        c.distinctField = field;
+        return c;
+    }
 
     private MongoCommand(Type type, String rawText) {
         this.type = type;

@@ -18,7 +18,7 @@ public class TestMongoExecutionBoundaries {
     public static void main(String[] args) {
         for (String input : List.of("db.c.deleteMany({} garbage)", "db.c.insertOne({x:1} {x:2})",
                 "db.c.find({}).sort({x:1} garbage)", "db.c.insertMany([null])",
-                "db.c.insertMany([{}], {ordered:false})")) {
+                "db.c.insertMany([{}], {unknown:false})")) {
             check("reject " + input, () -> {
                 try { new MongoCommandParser().parse(input); throw new AssertionError("accepted partial/invalid input"); }
                 catch (MongoCommandException expected) { }

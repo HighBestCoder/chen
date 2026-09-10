@@ -176,6 +176,9 @@ public final class MongoExecutionStatsBuilder {
         }
         return switch (type) {
             case FIND -> "FIND";
+            case FIND_ONE -> "FIND_ONE";
+            case COUNT -> "COUNT";
+            case DISTINCT -> "DISTINCT";
             case AGGREGATE -> "AGGREGATE";
             case SHOW_DBS, SHOW_COLLECTIONS -> "SHOW";
             case USE_DB -> "USE";
