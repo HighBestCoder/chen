@@ -19,10 +19,13 @@ public class WebExceptionResolver implements HandlerExceptionResolver {
         if (response.isCommitted()) {
             return null;
         }
-        response.setStatus(500);
+        boolean denied = org.jumpserver.chen.framework.datasource.error.SqlPermissionErrorClassifier.isPermissionDenied(ex)
+                || org.jumpserver.chen.modules.mongodb.MongoPermissionErrorClassifier.isPermissionDenied(ex);
+        response.setStatus(denied ? 403 : 500);
         response.setContentType("text/plain;charset=UTF-8");
         try {
-            response.getWriter().write(ex instanceof ChenException ? ex.getMessage() : "Internal server error");
+            response.getWriter().write(denied ? org.jumpserver.chen.framework.i18n.MessageUtils.get("msg.error.no_operation_permission")
+                    : ex instanceof ChenException ? ex.getMessage() : "Internal server error");
         } catch (IOException e) {
             log.error("Failed to write error response", e);
         }

@@ -91,7 +91,7 @@ public class DataViewConsole extends AbstractConsole {
 
             this.tableDataView.loadData();
         } catch (SQLException e) {
-            this.getMessager().send(Message.error(MessageUtils.get("msg.error.fetch_error"), e.getMessage()));
+            this.getMessager().send(Message.error(MessageUtils.get("msg.error.fetch_error"), e));
         } finally {
             this.tableDataView.getStateManager().getState().setLoading(false);
             this.tableDataView.getStateManager().commit();
@@ -171,7 +171,7 @@ public class DataViewConsole extends AbstractConsole {
             this.getPacketIO().sendPacket("update_data_view", new UpdateDataView(this.tableDataView.getTitle(), this.tableDataView.getData()));
             this.tableDataView.getStateManager().commit();
         } catch (SQLException e) {
-            this.getMessager().send(Message.error(MessageUtils.get("msg.error.fetch_error"), e.getMessage()));
+            this.getMessager().send(Message.error(MessageUtils.get("msg.error.fetch_error"), e));
         } finally {
             this.tableDataView.getStateManager().getState().setLoading(false);
             this.tableDataView.getStateManager().commit();

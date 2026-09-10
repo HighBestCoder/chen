@@ -195,7 +195,7 @@ public class QueryConsole extends AbstractConsole {
             this.getPacketIO().sendPacket("update_data_view", new UpdateDataView(action.getDataView(), dataView.getData()));
 
         } catch (SQLException e) {
-            this.getMessager().send(Message.error(MessageUtils.get("msg.error.fetch_error"), e.getMessage()));
+            this.getMessager().send(Message.error(MessageUtils.get("msg.error.fetch_error"), e));
         } finally {
             dataView.getStateManager().getState().setLoading(false);
             dataView.getStateManager().commit();
@@ -299,15 +299,15 @@ public class QueryConsole extends AbstractConsole {
         } catch (ParserException e) {
             recordPreExecutionFailure(sql, aclResult, e);
             this.getConsoleLogger().error("%s: %s", MessageUtils.get("msg.error.parse_error"), e.getMessage());
-            this.getPacketIO().sendPacket("message", Message.error(MessageUtils.get("msg.error.parse_error"), e.getMessage()));
+            this.getPacketIO().sendPacket("message", Message.error(MessageUtils.get("msg.error.parse_error"), e));
         } catch (SQLException e) {
             if (SqlPermissionErrorClassifier.isPermissionDenied(e)) {
                 String msg = MessageUtils.get("msg.error.no_operation_permission");
                 this.getConsoleLogger().error("%s", msg);
-                this.getPacketIO().sendPacket("message", Message.error(msg, e.getMessage()));
+                this.getPacketIO().sendPacket("message", Message.error(msg, e));
             } else {
                 this.getConsoleLogger().error("%s: %s", MessageUtils.get("msg.error.execute_error"), e.getMessage());
-                this.getPacketIO().sendPacket("message", Message.error(MessageUtils.get("msg.error.execute_error"), e.getMessage()));
+                this.getPacketIO().sendPacket("message", Message.error(MessageUtils.get("msg.error.execute_error"), e));
             }
         } finally {
             this.getState().setInQuery(false);
