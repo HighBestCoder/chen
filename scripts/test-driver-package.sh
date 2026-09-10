@@ -12,3 +12,5 @@ java -Dloader.main=TestSessionRenewalRpc -Dloader.path=backend/web/target/test-c
 # Verify guest engine, resource bindings and child JVM launch from the shipped fat jar.
 java -Dloader.main=TestMongoScriptWorker -Dloader.path=backend/modules/target/test-classes \
   -cp "$jar_path" org.springframework.boot.loader.launch.PropertiesLauncher
+java -Dloader.main=TestU06DriverContract -Dloader.path=backend/web/target/test-classes \
+  -cp "$jar_path" org.springframework.boot.loader.launch.PropertiesLauncher

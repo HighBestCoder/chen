@@ -88,7 +88,7 @@ public class TestU05PermissionIntegration extends TestConnectionTlsIntegration {
         } finally {admin.getDatabase(db).drop();admin.getDatabase("admin").runCommand(new Document("dropUser","u05_reader"));admin.close();}
     }
     public static void main(String[] args)throws Exception {
-        register("postgresql","drivers/postgresql/postgresql-42.6.0.jar");
+        register("postgresql","drivers/postgresql/postgresql-42.7.13.jar");
         register("mysql","drivers/mysql/mysql-connector-java-8.0.30.jar");
         register("sqlserver","drivers/sqlserver/mssql-jdbc-12.8.1.jre11.jar");
         for(String type:List.of("postgresql","mysql","sqlserver"))relational(type);
