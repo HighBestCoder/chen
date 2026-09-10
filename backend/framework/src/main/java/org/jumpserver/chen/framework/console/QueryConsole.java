@@ -362,8 +362,8 @@ public class QueryConsole extends AbstractConsole {
         plan.setAclResult(aclResult);
         DataView dataView = new DataView(plan.getSourceSQL(), this.getPacketIO(), this.getConsoleLogger());
         dataView.setSql(plan.getSourceSQL());
-        dataView.getState().setLimit(selectedLimit != null ? selectedLimit
-                : org.jumpserver.chen.framework.policy.QueryPolicyHolder.current().clampLimit(0));
+        dataView.getState().setLimit(Math.min(dataView.getState().getMaxDisplayLimit(),
+                org.jumpserver.chen.framework.policy.QueryPolicyHolder.current().clampLimit(selectedLimit != null ? selectedLimit : 0)));
 
         // The submitted batch was approved once by onSQL. Every later load
         // is a new execution and must be checked before generateTargetSQL counts rows.

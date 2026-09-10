@@ -107,20 +107,11 @@ public class DataViewConsole extends AbstractConsole {
         this.getPacketIO().sendPacket("new_data_view", Map.of("title", viewTitle));
         var dataView = new DataView(viewTitle, this.getPacketIO(), this.getConsoleLogger());
 
-        // task-02 (R04 §6.4): object-browse / table-preview path defaults
-        // to QueryPolicy.defaultPreviewLimit (built-in 100), separately
-        // from the SQL console's own default (50). The hard cap from
-        // QueryPolicy.maxRows still applies in SQLExecutePlan.
-        try {
-            int previewLimit = "mongodb".equals(this.getDatasource().getName())
-                    ? 50
-                    : QueryPolicyHolder.current().getDefaultPreviewLimit();
-            if (previewLimit > 0) {
-                dataView.getStateManager().getState().setLimit(previewLimit);
-            }
-        } catch (Throwable t) {
-            // never let the policy lookup break the data-view creation.
-        }
+        // Collection previews default to 50; relational previews default to 100.
+        // The advertised size and pagination stride must match the execution cap.
+        int previewLimit = "mongodb".equals(this.getDatasource().getName())
+                ? 50 : QueryPolicyHolder.current().getDefaultPreviewLimit();
+        dataView.getState().setLimit(Math.min(previewLimit, dataView.getState().getMaxDisplayLimit()));
 
         var session = SessionManager.getCurrentSession();
         dataView.setLoadDataInterface((sqlQueryParams, sink) -> {

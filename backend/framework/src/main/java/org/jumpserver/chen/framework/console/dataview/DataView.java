@@ -50,6 +50,9 @@ public class DataView extends SQLResult {
     public DataView(String title, PacketIO packetIO, Logger logger) {
         this.title = title;
         this.state = new DataViewState(title);
+        var policy = org.jumpserver.chen.framework.policy.QueryPolicyHolder.current();
+        this.state.setMaxDisplayLimit(Math.min(50_000, policy.getMaxRows()));
+        this.state.setLimit(Math.min(50, this.state.getMaxDisplayLimit()));
         this.stateManager = new StateManager<>(this.state, packetIO);
         this.consoleLogger = logger;
     }
@@ -85,7 +88,7 @@ public class DataView extends SQLResult {
     }
 
     public void loadData() throws SQLException {
-        if (this.state.getLimit() <= 0 || this.state.getLimit() > 50_000 || this.state.getPage() < 1) {
+        if (this.state.getLimit() <= 0 || this.state.getLimit() > effectiveDisplayLimit() || this.state.getPage() < 1) {
             throw new SQLException("Invalid display page or limit");
         }
         SQLQueryParams queryParams = new SQLQueryParams();
@@ -420,8 +423,13 @@ public class DataView extends SQLResult {
         }
     }
 
+    private int effectiveDisplayLimit() {
+        return Math.min(this.state.getMaxDisplayLimit(),
+                org.jumpserver.chen.framework.policy.QueryPolicyHolder.current().getMaxRows());
+    }
+
     public void changeLimit(int limit) throws SQLException {
-        if (limit <= 0 || limit > 50_000) throw new SQLException("Display limit must be between 1 and 50000");
+        if (limit <= 0 || limit > effectiveDisplayLimit()) throw new SQLException("Display limit exceeds the configured maximum");
         var oldLimit = this.getStateManager().getState().getLimit();
         var oldPage = this.getStateManager().getState().getPage();
         try {
