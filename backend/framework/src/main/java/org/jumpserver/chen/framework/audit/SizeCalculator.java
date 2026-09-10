@@ -87,10 +87,10 @@ public final class SizeCalculator {
         for (int i = 0; i < upto; i++) {
             String key = columnKeys.get(i);
             Object value = row.get(i);
-            if (key == null || key.isEmpty() || value == null) {
+            if (key == null || key.isEmpty()) {
                 continue;
             }
-            long bytes = value.toString().getBytes(StandardCharsets.UTF_8).length;
+            long bytes = value == null ? 0L : value.toString().getBytes(StandardCharsets.UTF_8).length;
             acc.merge(key, bytes, Long::sum);
         }
     }

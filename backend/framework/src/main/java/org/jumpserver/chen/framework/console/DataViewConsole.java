@@ -135,6 +135,9 @@ public class DataViewConsole extends AbstractConsole {
                     this.getConsoleLogger().error("%s", aclResult.denialMessage());
                     CommandRecord commandRecord = new CommandRecord(sql);
                     commandRecord.applyACL(aclResult);
+                    commandRecord.setError(aclResult.denialMessage());
+                    commandRecord.setExecutionStats(org.jumpserver.chen.framework.audit.SqlExecutionStatsBuilder.fromFailure(
+                            this.getDatasource(), sql, new SQLException(aclResult.denialMessage())));
                     session.recordCommand(commandRecord);
 
                     this.stateManager.getState().setLoading(false);

@@ -305,6 +305,11 @@ public class JMSSession extends BaseSession {
 
     @Override
     public SQLQueryResult withAudit(String command, QueryAuditFunction queryAuditFunction) throws SQLException, CommandRejectException {
+        return withAudit(command, null, queryAuditFunction);
+    }
+
+    @Override
+    public SQLQueryResult withAudit(String command, String namespace, QueryAuditFunction queryAuditFunction) throws SQLException, CommandRejectException {
         synchronized (this) {
             if (!allowsExecution()) throw new CommandRejectException(MessageUtils.get("msg.error.session_unavailable"));
             this.lastActiveTime = System.currentTimeMillis();
@@ -322,6 +327,7 @@ public class JMSSession extends BaseSession {
 
             try {
                 ExecutionStats stats = SqlExecutionStatsBuilder.fromSuccess(this.getDatasource(), command, result);
+                if (namespace != null && !namespace.isBlank()) stats.setNamespace(namespace);
                 commandRecord.setExecutionStats(stats);
             } catch (Throwable statsErr) {
                 log.warn("withAudit: failed to build success ExecutionStats, continuing without it", statsErr);
@@ -330,10 +336,11 @@ public class JMSSession extends BaseSession {
             this.replayHandler.writeOutput(result.getOutput());
             return result;
 
-        } catch (SQLException e) {
+        } catch (SQLException | RuntimeException e) {
             commandRecord.setError(e.getMessage());
             try {
                 ExecutionStats stats = SqlExecutionStatsBuilder.fromFailure(this.getDatasource(), command, e);
+                if (namespace != null && !namespace.isBlank()) stats.setNamespace(namespace);
                 commandRecord.setExecutionStats(stats);
             } catch (Throwable statsErr) {
                 log.warn("withAudit: failed to build failure ExecutionStats, continuing without it", statsErr);

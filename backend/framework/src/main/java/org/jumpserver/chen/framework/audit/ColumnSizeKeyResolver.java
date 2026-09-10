@@ -37,8 +37,8 @@ public final class ColumnSizeKeyResolver {
         String reason = null;
 
         for (Field field : fields) {
-            String column = normalize(emptyToFallback(field == null ? null : field.getName(), "column"));
-            String table = normalize(field == null ? null : field.getTable());
+            String column = emptyToFallback(field == null ? null : field.getName(), "column");
+            String table = field == null || field.getTable() == null ? "" : field.getTable();
             if (!table.isEmpty()) {
                 keys.add(table + "." + column);
                 continue;
@@ -62,8 +62,8 @@ public final class ColumnSizeKeyResolver {
     }
 
     public static String keyForField(Field field) {
-        String column = normalize(emptyToFallback(field == null ? null : field.getName(), "column"));
-        String table = normalize(field == null ? null : field.getTable());
+        String column = emptyToFallback(field == null ? null : field.getName(), "column");
+        String table = field == null || field.getTable() == null ? "" : field.getTable();
         if (table.isEmpty()) {
             table = UNKNOWN_PREFIX;
         }
@@ -129,7 +129,7 @@ public final class ColumnSizeKeyResolver {
             while (join.find()) {
                 joins.add(new JoinPart(joinKind(join.group(1)), normalize(join.group(2))));
             }
-            return new SourceInfo(base, joins, false);
+            return new SourceInfo(base, joins, true); // Regex attribution is best-effort, never authoritative.
         }
 
         String prefix() {

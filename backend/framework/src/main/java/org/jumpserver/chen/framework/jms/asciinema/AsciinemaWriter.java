@@ -53,7 +53,7 @@ public class AsciinemaWriter {
     }
 
     public void writeStdout(double ts, byte[] data) throws IOException {
-        Object[] row = new Object[]{ts, "o", new String(data)};
+        Object[] row = new Object[]{ts, "o", new String(data, java.nio.charset.StandardCharsets.UTF_8)};
         Gson gson = new Gson();
         String json = gson.toJson(row) + NEW_LINE;
         this.writer.write(json);
