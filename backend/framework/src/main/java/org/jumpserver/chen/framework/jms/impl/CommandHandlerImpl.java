@@ -11,13 +11,30 @@ import org.jumpserver.chen.wisp.ServiceOuterClass;
 
 @Slf4j
 public class CommandHandlerImpl implements CommandHandler {
+    private final org.jumpserver.chen.framework.audit.AuditOutbox outbox;
     private final Common.Session session;
     private final ServiceGrpc.ServiceBlockingStub serviceBlockingStub;
 
 
     public CommandHandlerImpl(Common.Session session, ServiceGrpc.ServiceBlockingStub serviceBlockingStub) {
+        this.outbox = org.jumpserver.chen.framework.audit.AuditOutbox.configured();
         this.session = session;
         this.serviceBlockingStub = serviceBlockingStub;
+    }
+
+    private java.util.Map<String, Object> event(CommandRecord record, String output) {
+        var event = new java.util.LinkedHashMap<String, Object>();
+        event.put("id", record.getAuditId()); event.put("session", session.getId());
+        event.put("org_id", session.getOrgId()); event.put("asset", session.getAsset());
+        event.put("account", session.getAccount()); event.put("user", session.getUser());
+        event.put("timestamp", record.getTimestamp()); event.put("input", record.getInput());
+        event.put("output", output); event.put("risk_level", record.getRiskLevel().getNumber());
+        return event;
+    }
+
+    @Override
+    public void beginCommand(CommandRecord record) {
+        if (outbox != null) outbox.begin(event(record, "Execution started; outcome pending"));
     }
 
     @Override
@@ -56,6 +73,11 @@ public class CommandHandlerImpl implements CommandHandler {
                 commandRecord.getOutput(),
                 stats
         );
+
+        if (outbox != null) {
+            outbox.complete(event(commandRecord, output));
+            return;
+        }
 
         var reqBuilder = ServiceOuterClass.CommandRequest
                 .newBuilder()
