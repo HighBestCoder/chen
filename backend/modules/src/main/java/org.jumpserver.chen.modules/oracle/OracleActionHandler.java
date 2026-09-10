@@ -8,6 +8,9 @@ import org.jumpserver.chen.framework.datasource.entity.form.FormData;
 import org.jumpserver.chen.framework.datasource.entity.resource.TreeNode;
 import org.jumpserver.chen.framework.i18n.MessageUtils;
 
+import org.jumpserver.chen.framework.datasource.sql.SQL;
+import org.jumpserver.chen.framework.utils.TreeUtils;
+
 import java.sql.SQLException;
 import java.util.List;
 
@@ -35,10 +38,11 @@ public class OracleActionHandler extends BaseActionHandler {
         );
     }
 
-    private static final String SQL_SELECT_TABLE_DETAIL = "SELECT TABLE_NAME,TABLESPACE_NAME,STATUS,NUM_ROWS,BLOCKS,AVG_ROW_LEN,SAMPLE_SIZE,OWNER FROM ALL_TABLES WHERE TABLESPACE_NAME is not null AND TABLE_NAME = '?'";
+    private static final String SQL_SELECT_TABLE_DETAIL = "SELECT TABLE_NAME,TABLESPACE_NAME,STATUS,NUM_ROWS,BLOCKS,AVG_ROW_LEN,SAMPLE_SIZE,OWNER FROM ALL_TABLES WHERE OWNER = ? AND TABLE_NAME = ?";
 
     public EventEmitter onTableProperties(TreeNode node) throws SQLException {
-        return this.onShowObjectProperties("table", SQL_SELECT_TABLE_DETAIL, node);
+        return this.onShowObjectProperties("table", SQL.bound(SQL_SELECT_TABLE_DETAIL,
+                TreeUtils.getValue(node.getKey(), "schema"), TreeUtils.getValue(node.getKey(), "table")), node);
     }
 
     @Override

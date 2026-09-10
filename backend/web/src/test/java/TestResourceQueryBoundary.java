@@ -51,9 +51,10 @@ public class TestResourceQueryBoundary {
             var browser=(org.jumpserver.chen.framework.datasource.base.BaseResourceBrowser)Class.forName(prefix+"ResourceBrowser")
                     .getConstructor(ConnectionManager.class).newInstance(capturedManager);
             browser.getTables(value);browser.getViews(value);
-            if(!List.of("mysql","postgresql","sqlserver").contains(adapter[0]))browser.getFields(value,value);
+            // Oracle/DB2/DM now use JDBC metadata; exact-pattern/cleanup coverage lives in TestS09Adapters.
+            if(adapter[0].equals("clickhouse"))browser.getFields(value,value);
         }
-        if(lookups.size()!=18)throw new AssertionError("missing metadata adapter branches");
+        if(lookups.size()!=15)throw new AssertionError("missing metadata adapter branches");
         for(SQL lookup:lookups){
             if(lookup.getSql().contains(value) || lookup.getParameters().isEmpty()
                     || !lookup.getParameters().stream().allMatch(value::equals))throw new AssertionError("unbound resource name");

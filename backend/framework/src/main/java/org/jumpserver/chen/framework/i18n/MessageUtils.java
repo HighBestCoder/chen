@@ -19,7 +19,7 @@ public class MessageUtils {
         try {
             var locale = SessionManager.getCurrentSession().getLocale();
             var text = messageSource.getMessage(msgKey, null, locale);
-            return String.format(text, args);
+            return String.format(locale, text, args);
         } catch (Exception e) {
             log.warn("Message not found: {}", msgKey);
             return msgKey;

@@ -8,6 +8,9 @@ import org.jumpserver.chen.framework.datasource.entity.form.FormData;
 import org.jumpserver.chen.framework.datasource.entity.resource.TreeNode;
 import org.jumpserver.chen.framework.i18n.MessageUtils;
 
+import org.jumpserver.chen.framework.datasource.sql.SQL;
+import org.jumpserver.chen.framework.utils.TreeUtils;
+
 import java.sql.SQLException;
 import java.util.List;
 
@@ -64,10 +67,11 @@ public class DB2ActionHandler extends BaseActionHandler {
         return this.onShowObjectProperties("schema", SQL_SELECT_SCHEMA_DETAIL, node);
     }
 
-    private static final String SQL_SELECT_TABLE_DETAIL = "select TABNAME, TBSPACE, TABSCHEMA, TYPE, STATUS, COLCOUNT, ACTIVE_BLOCKS, AVGROWSIZE, OWNER, CREATE_TIME from syscat.TABLES WHERE TBSPACE is not null AND TABNAME = '?'";
+    private static final String SQL_SELECT_TABLE_DETAIL = "select TABNAME, TBSPACE, TABSCHEMA, TYPE, STATUS, COLCOUNT, ACTIVE_BLOCKS, AVGROWSIZE, OWNER, CREATE_TIME from syscat.TABLES WHERE TABSCHEMA = ? AND TABNAME = ?";
 
     public EventEmitter onTableProperties(TreeNode node) throws SQLException {
-        return this.onShowObjectProperties("table", SQL_SELECT_TABLE_DETAIL, node);
+        return this.onShowObjectProperties("table", SQL.bound(SQL_SELECT_TABLE_DETAIL,
+                TreeUtils.getValue(node.getKey(), "schema"), TreeUtils.getValue(node.getKey(), "table")), node);
     }
 
 

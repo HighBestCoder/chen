@@ -24,7 +24,7 @@ public class OracleResourceBrowser extends BaseResourceBrowser {
         return this.getSchemas(SQL.of(SQL_GET_SCHEMAS));
     }
 
-    private static final String SQL_GET_TABLES = "SELECT TABLE_NAME FROM ALL_TABLES where TABLESPACE_NAME is not null AND OWNER=?";
+    private static final String SQL_GET_TABLES = "SELECT TABLE_NAME FROM ALL_TABLES where OWNER=?";
 
     @Override
     public List<Table> getTables(String schema) throws SQLException {
@@ -38,11 +38,10 @@ public class OracleResourceBrowser extends BaseResourceBrowser {
         return this.getViews(SQL.bound(SQL_GET_VIEWS, schema));
     }
 
-    private static final String SQL_GET_FIELDS = "SELECT COLUMN_NAME,DATA_TYPE,DATA_LENGTH,DATA_PRECISION,DATA_SCALE,CHAR_LENGTH,CHAR_USED,DATA_DEFAULT,COMMENTS FROM ALL_TAB_COLUMNS WHERE OWNER=? AND TABLE_NAME=?" ;
 
     @Override
     public List<Field> getFields(String schema, String table) throws SQLException {
-        return this.getFields(SQL.bound(SQL_GET_FIELDS, schema, table));
+        return this.getColumnMetadata(schema, table);
     }
 
 
