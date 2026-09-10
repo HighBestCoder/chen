@@ -39,7 +39,8 @@ public class MongoSqlHintsHandlerStub implements SQLHintsHandler {
         // frontend/src/components/Main/Explore/QueryConsole/CodeEditor.vue.
         hints.put("mongo", List.of("db", "getCollection", "findOne", "countDocuments", "distinct", "skip", "find", "aggregate", "insertOne", "insertMany",
                 "updateOne", "updateMany", "deleteOne", "deleteMany", "drop",
-                "show dbs", "show collections", "use", "limit", "sort", "ISODate"));
+                "show dbs", "show collections", "use", "limit", "sort", "ISODate",
+                "hint", "collation", "maxTimeMS", "batchSize", "replaceOne", "findOneAndUpdate", "findOneAndReplace", "findOneAndDelete", "bulkWrite", "createIndex", "getIndexes", "dropIndex", "runCommand", "createCollection", "dropDatabase", "stats", "getSiblingDB", "toArray", "forEach", "map", "hasNext", "next", "ObjectId", "NumberLong", "NumberDecimal", "BinData", "print", "printjson"));
         return hints;
     }
 }

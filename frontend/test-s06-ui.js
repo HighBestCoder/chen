@@ -96,6 +96,11 @@ async function main() {
     vm.runInNewContext(text+';this.run=getSnippets',sandbox)
     const rows=await sandbox.run();assert.equal(rows.length,2);assert.deepStrictEqual(offsets,[0,1]);assert.equal(rows[0].args,'a\\b')
   })
+  await test('Mongo script formatting preserves JavaScript execution semantics', () => {
+    const source=fs.readFileSync(path.join(__dirname,'src/utils/mongoFormatter.js'),'utf8').replace('export function','function')
+    const ctx={};vm.runInNewContext(source+';this.format=formatMongoCommand',ctx)
+    for(const script of ["let n=1\nn++\nn", "db.c.find({}).map(x=>{return\n{x:1}})", "db.c.find({});\ndb.c.insertOne({x:1})", "const s=`a,b:{x}`;s"]) assert.equal(ctx.format(script),script)
+  })
   await test('Mongo formatter preserves regex punctuation and repeated formatting', () => {
     const source=fs.readFileSync(path.join(__dirname,'src/utils/mongoFormatter.js'),'utf8').replace('export function','function')
     const ctx={};vm.runInNewContext(source+';this.format=formatMongoCommand',ctx)

@@ -27,14 +27,24 @@ public class MongoActuator {
     private static final String LIMIT_STAGE = "$limit";
 
     private final MongoConnectionManager connectionManager;
-    private final MongoResultTableAdapter adapter = new MongoResultTableAdapter();
+    private final MongoResultTableAdapter adapter;
+    private final java.util.function.Consumer<List<Document>> observer;
 
     public MongoActuator(MongoConnectionManager connectionManager) {
+        this(connectionManager,null);
+    }
+    public MongoActuator(MongoConnectionManager connectionManager,java.util.function.Consumer<List<Document>> observer) {
         this.connectionManager = connectionManager;
+        this.observer=observer;this.adapter=new MongoResultTableAdapter(observer);
     }
 
     public SQLQueryResult execute(MongoCommand command, int offset, int limit) {
         return switch (command.getType()) {
+            case SCRIPT -> MongoScriptRunner.execute(command,connectionManager,org.jumpserver.chen.framework.session.SessionManager.getCurrentSession(),limit);
+            case COMMAND -> executeDatabaseCommand(command,limit);
+            case REPLACE, FIND_AND_UPDATE, FIND_AND_REPLACE, FIND_AND_DELETE -> executeMutation(command);
+            case BULK_WRITE -> executeBulk(command);
+            case CREATE_INDEX, LIST_INDEXES, DROP_INDEX -> executeIndex(command,limit);
             case FIND -> executeFind(command, offset, limit);
             case FIND_ONE -> executeFindOne(command);
             case COUNT -> executeCount(command);
@@ -50,12 +60,88 @@ public class MongoActuator {
         };
     }
 
+    private SQLQueryResult unacknowledged(MongoCommand command,long start) {
+        SQLQueryResult result=writeResult(command.getRawText(),-1,start);
+        return new SQLQueryResult(command.getRawText()) {
+            {setHasResultSet(false);setUpdateCount(-1);setStartTime(result.getStartTime());setQueryFinishedTime(result.getQueryFinishedTime());setFetchFinishedTime(result.getFetchFinishedTime());setEndTime(result.getEndTime());}
+            @Override public String getOutput(){return "Command submitted without acknowledgement; database outcome and affected rows are unknown";}
+        };
+    }
+    private SQLQueryResult executeMutation(MongoCommand command) {
+        long start=System.currentTimeMillis();var collection=collectionOf(command);Document value;
+        if(command.getType()==MongoCommand.Type.REPLACE) {
+            var result=collection.replaceOne(command.getFilter(),command.getUpdate(),MongoOptions.apply(new ReplaceOptions(),command.getOptions()));
+            if(!result.wasAcknowledged())return unacknowledged(command,start);
+            observeUpdate(result);
+            return writeResult(command.getRawText(),result.getModifiedCount()+(result.getUpsertedId()==null?0:1),start);
+        }
+        if(command.getType()==MongoCommand.Type.FIND_AND_DELETE)value=collection.findOneAndDelete(command.getFilter(),MongoOptions.apply(new FindOneAndDeleteOptions(),command.getOptions()));
+        else if(command.getType()==MongoCommand.Type.FIND_AND_REPLACE)value=collection.findOneAndReplace(command.getFilter(),command.getUpdate(),MongoOptions.apply(new FindOneAndReplaceOptions(),command.getOptions()));
+        else {
+            var options=MongoOptions.apply(new FindOneAndUpdateOptions(),command.getOptions());
+            value=command.getUpdatePipeline()==null?collection.findOneAndUpdate(command.getFilter(),command.getUpdate(),options):collection.findOneAndUpdate(command.getFilter(),command.getUpdatePipeline(),options);
+        }
+        // A returned before/after document is not a reliable modified-row count.
+        return adapter.toResult(command.getRawText(),command.getCollection(),value==null?List.of():List.of(value),start,System.currentTimeMillis(),value==null?0:1,false);
+    }
+    private SQLQueryResult executeBulk(MongoCommand command) {
+        long start=System.currentTimeMillis();
+        var result=collectionOf(command).bulkWrite(MongoBulkSupport.models(command.getDocuments()),MongoOptions.apply(new BulkWriteOptions(),command.getOptions()));
+        if(!result.wasAcknowledged())return unacknowledged(command,start);
+        if (observer != null) {
+            Document upserts = new Document();
+            result.getUpserts().forEach(upsert -> upserts.put(Integer.toString(upsert.getIndex()), upsert.getId()));
+            observer.accept(List.of(new Document("acknowledged", true).append("insertedCount", result.getInsertedCount())
+                    .append("matchedCount", result.getMatchedCount()).append("modifiedCount", result.getModifiedCount())
+                    .append("deletedCount", result.getDeletedCount()).append("upsertedCount", result.getUpserts().size()).append("upsertedIds", upserts)));
+        }
+        return writeResult(command.getRawText(),(long)result.getInsertedCount()+result.getModifiedCount()+result.getDeletedCount()+result.getUpserts().size(),start);
+    }
+    private SQLQueryResult executeIndex(MongoCommand command,int limit) {
+        long start=System.currentTimeMillis();var collection=collectionOf(command);
+        if(command.getType()==MongoCommand.Type.CREATE_INDEX) {
+            String name=collection.createIndex(command.getFilter(),MongoOptions.apply(new IndexOptions(),command.getOptions()));
+            return adapter.toResult(command.getRawText(),List.of(new Document("name",name)),start,System.currentTimeMillis());
+        }
+        if(command.getType()==MongoCommand.Type.DROP_INDEX) {
+            Object key=command.getOptions().get("index");
+            if(key instanceof String name)collection.dropIndex(name);else if(key instanceof Document d)collection.dropIndex(d);else throw new MongoCommandException("dropIndex requires name or key document");
+            return writeResult(command.getRawText(),-1,start);
+        }
+        List<Document> rows=new ArrayList<>();int cap=resolveLimit(null,limit);boolean truncated;
+        try(var cursor=collection.listIndexes().iterator()){while(rows.size()<cap&&cursor.hasNext())rows.add(cursor.next());truncated=cursor.hasNext();}
+        var result=adapter.toResult(command.getRawText(),rows,start,System.currentTimeMillis());result.setTruncated(truncated);return result;
+    }
+    private SQLQueryResult executeDatabaseCommand(MongoCommand command,int limit) {
+        long start=System.currentTimeMillis();MongoDatabase database=connectionManager.getDatabase(currentDatabase());
+        Document response=database.runCommand(command.getDatabaseCommand());
+        if(response.containsKey("writeErrors") || response.containsKey("writeConcernError"))throw new MongoCommandException("Database command reported write errors: "+response.toJson());
+        if (command.getDatabaseCommand().containsKey("writeConcern")
+                && !MongoOptions.writeConcern(command.getDatabaseCommand().get("writeConcern", Document.class)).isAcknowledged()) return unacknowledged(command,start);
+        Document cursor=response.get("cursor",Document.class);
+        if(cursor==null)return adapter.toResult(command.getRawText(),List.of(response),start,System.currentTimeMillis());
+        List<Document> rows=new ArrayList<>();int cap=resolveLimit(null,limit);long id=0;String collection=null;boolean truncated=false;
+        try {
+            for(;;) {
+                id=((Number)cursor.get("id")).longValue();String namespace=cursor.getString("ns");
+                String prefix=currentDatabase()+".";
+                if(!namespace.startsWith(prefix))throw new MongoCommandException("Command cursor does not belong to the current database");
+                collection=namespace.substring(prefix.length());
+                List<Document> batch=cursor.getList(cursor.containsKey("firstBatch")?"firstBatch":"nextBatch",Document.class);
+                for(Document row:batch) {if(rows.size()==cap){truncated=true;break;}rows.add(row);}
+                if(truncated||id==0)break;
+                if(batch.isEmpty() && cursor.containsKey("nextBatch")){truncated=true;break;}
+                cursor=database.runCommand(new Document("getMore",id).append("collection",collection).append("batchSize",Math.min(1000,cap-rows.size()+1))).get("cursor",Document.class);
+            }
+        } finally {if(id!=0&&collection!=null)database.runCommand(new Document("killCursors",collection).append("cursors",List.of(id)));}
+        var result=adapter.toResult(command.getRawText(),rows,start,System.currentTimeMillis());result.setTruncated(truncated);return result;
+    }
+
     private SQLQueryResult executeFindOne(MongoCommand command) {
         long start = System.currentTimeMillis();
         FindIterable<Document> query = collectionOf(command).find(command.getFilter());
         if (command.getProjection() != null) query = query.projection(command.getProjection());
-        if (command.getOptions().containsKey("sort")) query = query.sort(command.getOptions().get("sort", Document.class));
-        if (command.getOptions().containsKey("maxTimeMS")) query = query.maxTime(command.getOptions().getInteger("maxTimeMS"), TimeUnit.MILLISECONDS);
+        query=MongoOptions.apply(query,command.getOptions());
         Document document = query.first();
         List<Document> rows = document == null ? List.of() : List.of(document);
         SQLQueryResult result = adapter.toResult(command.getRawText(), command.getCollection(), rows,
@@ -67,9 +153,8 @@ public class MongoActuator {
     private SQLQueryResult executeCount(MongoCommand command) {
         long start = System.currentTimeMillis();
         Document opts = command.getOptions();
-        CountOptions options = new CountOptions().skip(opts.getInteger("skip", 0)).limit(opts.getInteger("limit", 0))
-                .maxTime(opts.getInteger("maxTimeMS", 0), TimeUnit.MILLISECONDS);
-        long count = collectionOf(command).countDocuments(command.getFilter(), options);
+        CountOptions options = new CountOptions();
+        long count = collectionOf(command).countDocuments(command.getFilter(), MongoOptions.apply(options,opts));
         return adapter.toResult(command.getRawText(), command.getCollection(), List.of(new Document("count", count)),
                 start, System.currentTimeMillis(), 1, false);
     }
@@ -79,7 +164,7 @@ public class MongoActuator {
         int cap = resolveLimit(null, limit);
         List<Document> rows = new ArrayList<>();
         boolean truncated;
-        try (var cursor = collectionOf(command).distinct(command.getDistinctField(), command.getFilter(), org.bson.BsonValue.class).iterator()) {
+        try (var cursor = MongoOptions.apply(collectionOf(command).distinct(command.getDistinctField(), command.getFilter(), org.bson.BsonValue.class),command.getOptions()).iterator()) {
             while (rows.size() < cap && cursor.hasNext()) {
                 // Decode BSON directly: avoid JSON round trips changing int64 / dates / binary values.
                 try (var reader = new org.bson.BsonDocumentReader(new org.bson.BsonDocument("value", cursor.next()))) {
@@ -103,13 +188,17 @@ public class MongoActuator {
             iterable = iterable.projection(command.getProjection());
         }
         iterable = iterable.sort(command.getSort() != null ? command.getSort() : STABLE_SORT);
+        iterable = MongoOptions.apply(iterable, command.getOptions());
 
         boolean explicitLimit = command.getLimit() != null;
+        // CountOptions cannot express index bounds or let variables. Retain bounded results
+        // without publishing a count for a different query.
+        boolean countCompatible = !command.getOptions().containsKey("min") && !command.getOptions().containsKey("max") && !command.getOptions().containsKey("let");
         int effectiveLimit = resolveLimit(command.getLimit(), limit);
         long skipped = (long) Math.max(0, offset) + command.getSkip();
         if (skipped > Integer.MAX_VALUE) throw new MongoCommandException("Combined skip exceeds 2147483647");
         if (skipped > 0) iterable = iterable.skip((int) skipped);
-        boolean boundedBySafetyCap = command.getLimit() == null ? limit < 0
+        boolean boundedBySafetyCap = command.getLimit() == null ? limit < 0 || !countCompatible
                 : command.getLimit() == 0 || command.getLimit() > effectiveLimit;
         iterable = iterable.limit(effectiveLimit + (boundedBySafetyCap ? 1 : 0));
 
@@ -125,11 +214,11 @@ public class MongoActuator {
 
         long total;
         boolean paged;
-        if (explicitLimit) {
+        if (explicitLimit || !countCompatible) {
             total = documents.size();
             paged = false;
         } else {
-            total = Math.max(0, collection.countDocuments(command.getFilter()) - command.getSkip());
+            total = Math.max(0, collection.countDocuments(command.getFilter(), MongoOptions.apply(new CountOptions(),command.getOptions(),"batchSize","let","min","max","returnKey","showRecordId")) - command.getSkip());
             paged = limit >= 0;
         }
 
@@ -162,8 +251,7 @@ public class MongoActuator {
         }
 
         AggregateIterable<Document> iterable = collection.aggregate(pipeline);
-        if (command.getOptions().containsKey("allowDiskUse")) iterable = iterable.allowDiskUse(command.getOptions().getBoolean("allowDiskUse"));
-        if (command.getOptions().containsKey("maxTimeMS")) iterable = iterable.maxTime(command.getOptions().getInteger("maxTimeMS"), TimeUnit.MILLISECONDS);
+        iterable=MongoOptions.apply(iterable,command.getOptions());
         if (writesCollection) {
             iterable.toCollection();
             SQLQueryResult result = writeResult(command.getRawText(), -1, start);
@@ -245,7 +333,14 @@ public class MongoActuator {
     private SQLQueryResult executeInsert(MongoCommand command) {
         long start = System.currentTimeMillis();
         InsertManyResult result = collectionOf(command).insertMany(command.getDocuments(),
-                new InsertManyOptions().ordered(command.getOptions().getBoolean("ordered", true)));
+                MongoOptions.apply(new InsertManyOptions(),command.getOptions()));
+        if(!result.wasAcknowledged())return unacknowledged(command,start);
+        if(observer!=null) {
+            Document metadata=new Document("acknowledged",true);
+            if(command.isMulti()){Document ids=new Document();result.getInsertedIds().forEach((i,id)->ids.put(i.toString(),id));metadata.put("insertedIds",ids);}
+            else metadata.put("insertedId",result.getInsertedIds().get(0));
+            observer.accept(List.of(metadata));
+        }
         long inserted = result.getInsertedIds() == null
                 ? command.getDocuments().size()
                 : result.getInsertedIds().size();
@@ -255,20 +350,29 @@ public class MongoActuator {
     private SQLQueryResult executeUpdate(MongoCommand command) {
         long start = System.currentTimeMillis();
         MongoCollection<Document> collection = collectionOf(command);
-        UpdateOptions options = new UpdateOptions().upsert(command.getOptions().getBoolean("upsert", false));
-        if (command.getOptions().containsKey("arrayFilters")) options.arrayFilters(command.getOptions().getList("arrayFilters", Document.class));
-        UpdateResult result = command.isMulti()
-                ? collection.updateMany(command.getFilter(), command.getUpdate(), options)
-                : collection.updateOne(command.getFilter(), command.getUpdate(), options);
+        UpdateOptions options = MongoOptions.apply(new UpdateOptions(),command.getOptions());
+        UpdateResult result;
+        if(command.getUpdatePipeline()!=null) result=command.isMulti()?collection.updateMany(command.getFilter(),command.getUpdatePipeline(),options):collection.updateOne(command.getFilter(),command.getUpdatePipeline(),options);
+        else result=command.isMulti()?collection.updateMany(command.getFilter(),command.getUpdate(),options):collection.updateOne(command.getFilter(),command.getUpdate(),options);
+        if(!result.wasAcknowledged())return unacknowledged(command,start);
+        observeUpdate(result);
         return writeResult(command.getRawText(), result.getModifiedCount() + (result.getUpsertedId() == null ? 0 : 1), start);
+    }
+
+    private void observeUpdate(UpdateResult result) {
+        if (observer != null) observer.accept(List.of(new Document("acknowledged", true)
+                .append("matchedCount", result.getMatchedCount()).append("modifiedCount", result.getModifiedCount())
+                .append("upsertedCount", result.getUpsertedId() == null ? 0 : 1).append("upsertedId", result.getUpsertedId())));
     }
 
     private SQLQueryResult executeDelete(MongoCommand command) {
         long start = System.currentTimeMillis();
         MongoCollection<Document> collection = collectionOf(command);
         DeleteResult result = command.isMulti()
-                ? collection.deleteMany(command.getFilter())
-                : collection.deleteOne(command.getFilter());
+                ? collection.deleteMany(command.getFilter(),MongoOptions.apply(new DeleteOptions(),command.getOptions()))
+                : collection.deleteOne(command.getFilter(),MongoOptions.apply(new DeleteOptions(),command.getOptions()));
+        if(!result.wasAcknowledged())return unacknowledged(command,start);
+        if(observer!=null)observer.accept(List.of(new Document("acknowledged",true).append("deletedCount",(double)result.getDeletedCount())));
         return writeResult(command.getRawText(), result.getDeletedCount(), start);
     }
 
@@ -325,7 +429,9 @@ public class MongoActuator {
     }
 
     private MongoCollection<Document> collectionOf(MongoCommand command) {
-        return this.connectionManager.getDatabase(currentDatabase()).getCollection(command.getCollection());
+        MongoCollection<Document> collection=this.connectionManager.getDatabase(currentDatabase()).getCollection(command.getCollection());
+        if(command.getOptions().containsKey("writeConcern"))collection=collection.withWriteConcern(MongoOptions.writeConcern(command.getOptions().get("writeConcern",Document.class)));
+        return collection;
     }
 
     private String currentDatabase() {

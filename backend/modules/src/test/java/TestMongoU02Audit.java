@@ -14,7 +14,9 @@ public class TestMongoU02Audit {
     public static void main(String[] args) throws Exception {
         DBConnectInfo info=new DBConnectInfo();info.setDb("original");
         var manager=new MongoConnectionManager(info,null){@Override public String getVersion(){return "fixture";}};
-        for(String text:List.of("db.getCollection('c').findOne({})", "db.c.countDocuments({})", "db.c.distinct('n')",
+        for(String text:List.of("let x=1;db.c.insertOne({x:x})", "db.c.replaceOne({},{x:1})",
+                "db.c.findOneAndUpdate({},{$set:{x:1}})", "db.c.findOneAndReplace({},{x:1})", "db.c.findOneAndDelete({})",
+                "db.c.createIndex({x:1})", "db.c.dropIndex('x_1')", "db.getCollection('c').findOne({})", "db.c.countDocuments({})", "db.c.distinct('n')",
                 "db.getCollection('c').updateOne({},{$set:{n:1}},{upsert:true})", "db.c.insertMany([{n:1}],{ordered:false})")) {
             var command=new MongoCommandParser().parse(text);
             int[] executions={0};List<CommandRecord> records=new ArrayList<>();

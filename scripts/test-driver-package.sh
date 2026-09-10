@@ -9,3 +9,6 @@ java -Dloader.main=TestDriverLoading -Dloader.path=backend/web/target/test-class
 # Exercise the production renewal wiring from the same executable artifact.
 java -Dloader.main=TestSessionRenewalRpc -Dloader.path=backend/web/target/test-classes \
   -cp "$jar_path" org.springframework.boot.loader.launch.PropertiesLauncher
+# Verify guest engine, resource bindings and child JVM launch from the shipped fat jar.
+java -Dloader.main=TestMongoScriptWorker -Dloader.path=backend/modules/target/test-classes \
+  -cp "$jar_path" org.springframework.boot.loader.launch.PropertiesLauncher

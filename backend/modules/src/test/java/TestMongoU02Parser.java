@@ -19,7 +19,7 @@ public class TestMongoU02Parser {
         }
         for(String text:List.of(
             "db.getCollection('x', {}).find({})", "db.getCollection(null).find({})", "db.getCollection('x').ignored.find({})",
-            "db.getCollection('x');db.y.drop()", "db.c.findOne({}).limit(2)",
+            "db.c.findOne({}).limit(2)",
             "db.c.find({}).skip(-1)", "db.c.find({}).skip(1, ignored:2)", "db.c.find({}).skip(1).skip(2)",
             "db.c.countDocuments({}, {limit:1.5})", "db.c.countDocuments({}, {skip:2147483648})",
             "db.c.distinct('x', {}, {unknown:true})", "db.c.updateOne({},{$set:{x:1}},{upsert:'true'})",
@@ -30,6 +30,8 @@ public class TestMongoU02Parser {
             try {parser.parse(text);throw new AssertionError("Accepted invalid: "+text);}
             catch(MongoCommandException expected) { }
         }
+        var script=parser.parse("db.getCollection('x');db.y.drop()");
+        if(script.getType()!=MongoCommand.Type.SCRIPT || !script.writesCollection())throw new AssertionError("multi-statement must use the non-replayable script path");
         System.out.println("U02 parser: common methods/options accepted, original text retained, invalid/unknown inputs rejected");
     }
 }

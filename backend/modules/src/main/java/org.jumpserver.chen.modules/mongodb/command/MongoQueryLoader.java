@@ -52,6 +52,13 @@ public final class MongoQueryLoader implements LoadDataInterface {
             if (!initial && (command.writesCollection() || command.getType() == MongoCommand.Type.USE_DB)) {
                 throw new MongoCommandException("This command cannot be refreshed or exported again; execute it explicitly in the console");
             }
+            String expanded=command.authorizationText();
+            if(!expanded.equals(command.getRawText())) {
+                ACLResult expandedAcl=session.checkACL(expanded);
+                if(expandedAcl!=null&&!expandedAcl.allows(expanded)) {
+                    record.applyACL(expandedAcl);throw new MongoCommandException("Decoded command rejected by ACL");
+                }
+            }
             SQLQueryResult result = actuator.execute(command, params.getOffset(), params.getLimit());
             if (sink != null && result.isHasResultSet()) {
                 if (result.isTruncated()) {

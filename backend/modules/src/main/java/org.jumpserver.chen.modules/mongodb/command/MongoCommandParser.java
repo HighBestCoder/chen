@@ -31,10 +31,12 @@ public class MongoCommandParser {
 
     private static final Pattern CALL = Pattern.compile(
             "^db\\.([A-Za-z0-9_.$-]+)\\.([A-Za-z][A-Za-z0-9]*)\\s*\\(");
-    private static final Pattern MODIFIER = Pattern.compile("^\\.(sort|limit|skip)\\s*\\(");
+    private static final Pattern MODIFIER = Pattern.compile("^\\.(sort|limit|skip|hint|collation|maxTimeMS|batchSize)\\s*\\(");
     private static final String ALLOWED =
             "Allowed: getCollection / find / findOne / countDocuments / distinct / aggregate / insertOne / insertMany / updateOne / updateMany"
-                    + " / deleteOne / deleteMany / drop / show dbs / show collections / use <db>";
+                    + " / deleteOne / deleteMany / replaceOne / findOneAndUpdate / findOneAndReplace / findOneAndDelete"
+                    + " / bulkWrite / createIndex / getIndexes / dropIndex / runCommand / createCollection / dropDatabase / stats"
+                    + " / drop / show dbs / show collections / use <db> / JavaScript statements";
 
     public MongoCommand parse(String input) {
         String text = input == null ? "" : input.trim();
@@ -44,6 +46,7 @@ public class MongoCommandParser {
         if (text.isEmpty()) {
             throw new MongoCommandException("Empty command");
         }
+        if(isScript(text))return MongoCommand.script(input);
         String lower = text.toLowerCase();
         if (lower.equals("show dbs") || lower.equals("show databases")) {
             return MongoCommand.showDbs(text);
@@ -58,10 +61,51 @@ public class MongoCommandParser {
             }
             return MongoCommand.useDb(text, db);
         }
+        Matcher databaseCall=Pattern.compile("^db\\.(runCommand|createCollection|dropDatabase|stats)\\s*\\(").matcher(text);
+        if(databaseCall.find()) {
+            int end=closingParenthesis(text,databaseCall.end()-1);
+            if(!text.substring(end+1).trim().isEmpty())throw new MongoCommandException("Unexpected database command suffix");
+            List<String> args=splitTopLevelArgs(text.substring(databaseCall.end(),end));
+            String op=databaseCall.group(1);
+            if(op.equals("runCommand")) {
+                if(args.size()!=1)throw new MongoCommandException("runCommand requires one document");
+                Document command=parseJson(args.get(0),"command");
+                if(command.isEmpty() || command.containsKey("$db"))throw new MongoCommandException("Command must use the current database");
+                if(java.util.Set.of("eval","mapreduce","getmore","killcursors","authenticate","saslstart","saslcontinue","logout").contains(command.keySet().iterator().next().toLowerCase(java.util.Locale.ROOT)))
+                    throw new MongoCommandException("Command changes authentication, cursor ownership, or executes server JavaScript");
+                return MongoCommand.databaseCommand(text,command);
+            }
+            if(op.equals("createCollection")) {
+                if(args.isEmpty())throw new MongoCommandException("createCollection requires a name");
+                requireAtMost(args,2,op);Document command=new Document("create",parseString(args.get(0),"collection"));
+                if(args.size()==2) {Document opts=parseJson(args.get(1),"options"); if(opts.containsKey("create") || opts.containsKey("$db"))throw new MongoCommandException("Reserved command field");command.putAll(opts);}
+                return MongoCommand.databaseCommand(text,command);
+            }
+            requireAtMost(args,0,op);
+            return MongoCommand.databaseCommand(text,new Document(op.equals("stats")?"dbStats":"dropDatabase",1));
+        }
         if (lower.startsWith("db.")) {
             return parseCall(text);
         }
         throw new MongoCommandException("Unsupported command. " + ALLOWED);
+    }
+
+    private boolean isScript(String text) {
+        if(Pattern.compile("^(?:const|let|var|for|while|if|function|try|do|print|printjson)\\b").matcher(text).find())return true;
+        StringBuilder code = new StringBuilder();
+        char quote=0;boolean escaped=false;int depth=0;
+        for(char c:text.toCharArray()) {
+            if(quote!=0){if(escaped)escaped=false;else if(c=='\\')escaped=true;else if(c==quote)quote=0;continue;}
+            code.append(c);
+            if(c=='\''||c=='"'||c=='`')quote=c;
+            else if(c=='('||c=='['||c=='{')depth++;
+            else if(c==')'||c==']'||c=='}')depth--;
+            else if((c==';'||c=='\n'||c=='\r')&&depth==0)return true;
+        }
+        String visible = code.toString();
+        return visible.contains("//") || visible.contains("/*")
+                || Pattern.compile("\\.(?:toArray|forEach|map|hasNext|next|getSiblingDB)\\s*\\(").matcher(visible).find()
+                || Pattern.compile("^db\\s*\\[").matcher(visible).find();
     }
 
     private MongoCommand parseCall(String text) {
@@ -93,6 +137,7 @@ public class MongoCommandParser {
         Integer limit = null;
         Document sort = null;
         Integer skip = null;
+        Document cursorOptions=new Document();
         while (!remaining.isEmpty()) {
             Matcher modifier = MODIFIER.matcher(remaining);
             if (!modifier.find()) {
@@ -109,6 +154,9 @@ public class MongoCommandParser {
             } else if (name.equals("skip")) {
                 if (!op.equals("find") || skip != null) throw new MongoCommandException("skip is only supported once on find");
                 skip = nonNegativeInteger(parseValue(value), "skip");
+            } else if (!name.equals("limit")) {
+                if(!op.equals("find") || cursorOptions.containsKey(name))throw new MongoCommandException("Duplicate or invalid cursor option: "+name);
+                Object option=parseValue(value);rejectExecutableOperators(option);MongoOptions.validate(name,option);cursorOptions.put(name,option);
             } else {
                 if (!(op.equals("find") || op.equals("aggregate")) || limit != null) {
                     throw new MongoCommandException("limit is only supported once on find or aggregate");
@@ -125,7 +173,10 @@ public class MongoCommandParser {
             remaining = remaining.substring(close + 1).trim();
         }
 
-        return switch (op) {
+        MongoCommand parsed = switch (op) {
+            case "replaceOne", "findOneAndUpdate", "findOneAndReplace", "findOneAndDelete" -> buildMutation(text,collection,args,op);
+            case "bulkWrite" -> buildBulk(text,collection,args);
+            case "createIndex", "getIndexes", "dropIndex" -> buildIndex(text,collection,args,op);
             case "find" -> buildFind(text, collection, args, sort, limit).withSkip(skip == null ? 0 : skip);
             case "findOne" -> buildFindOne(text, collection, args);
             case "countDocuments" -> buildCount(text, collection, args);
@@ -141,14 +192,19 @@ public class MongoCommandParser {
             default -> throw new MongoCommandException(
                     "Unsupported operation 'db." + collection + "." + op + "()'. " + ALLOWED);
         };
+        for(var e:cursorOptions.entrySet()) {
+            if(parsed.getOptions().containsKey(e.getKey()))throw new MongoCommandException("Duplicate cursor option: "+e.getKey());
+            parsed.getOptions().put(e.getKey(),e.getValue());
+        }
+        return parsed;
     }
 
     private MongoCommand buildFind(String text, String collection, List<String> args,
                                    Document sort, Integer limit) {
-        requireAtMost(args, 2, "find(filter, projection)");
+        requireAtMost(args, 3, "find(filter, projection, options)");
         Document filter = args.isEmpty() ? new Document() : parseJson(args.get(0), "filter");
         Document projection = args.size() > 1 ? parseJson(args.get(1), "projection") : null;
-        return MongoCommand.find(text, collection, filter, projection, sort, limit);
+        return MongoCommand.find(text, collection, filter, projection, sort, limit).withOptions(options(args,2,"hint","collation","maxTimeMS","batchSize","comment","let","min","max","returnKey","showRecordId"));
     }
 
     private MongoCommand buildAggregate(String text, String collection, List<String> args, Integer limit) {
@@ -166,7 +222,7 @@ public class MongoCommandParser {
                 throw new MongoCommandException("limit cannot follow a terminal $out or $merge stage");
             }
         }
-        return MongoCommand.aggregate(text, collection, pipeline, limit).withOptions(options(args, 1, "allowDiskUse", "maxTimeMS"));
+        return MongoCommand.aggregate(text, collection, pipeline, limit).withOptions(options(args, 1, "allowDiskUse", "maxTimeMS", "hint", "collation", "comment", "let", "batchSize", "bypassDocumentValidation", "writeConcern"));
     }
 
     private MongoCommand buildInsert(String text, String collection, List<String> args, boolean many) {
@@ -174,14 +230,14 @@ public class MongoCommandParser {
         if (args.isEmpty()) {
             throw new MongoCommandException(shape + " requires a document argument");
         }
-        requireAtMost(args, many ? 2 : 1, shape);
+        requireAtMost(args, 2, shape);
         List<Document> documents = many
                 ? parseDocumentArray(args.get(0), "documents")
                 : List.of(parseJson(args.get(0), "document"));
         if (documents.isEmpty()) {
             throw new MongoCommandException(shape + " requires at least one document");
         }
-        return MongoCommand.insert(text, collection, documents).withOptions(options(args, 1, "ordered"));
+        return MongoCommand.insert(text, collection, documents).withMulti(many).withOptions(options(args, 1, many ? "ordered" : "bypassDocumentValidation", "bypassDocumentValidation", "comment", "writeConcern"));
     }
 
     private MongoCommand buildUpdate(String text, String collection, List<String> args, boolean multi) {
@@ -191,11 +247,17 @@ public class MongoCommandParser {
         }
         requireAtMost(args, 3, shape);
         Document filter = parseJson(args.get(0), "filter");
+        if(args.get(1).trim().startsWith("[")) {
+            List<Document> pipeline=parseDocumentArray(args.get(1),"update pipeline");
+            if(pipeline.isEmpty())throw new MongoCommandException("Update pipeline must not be empty");
+            return MongoCommand.update(text,collection,filter,null,multi).withUpdatePipeline(pipeline)
+                    .withOptions(options(args,2,"upsert","hint","collation","writeConcern","bypassDocumentValidation","let","comment"));
+        }
         Document update = parseJson(args.get(1), "update");
         if (update.isEmpty()) {
             throw new MongoCommandException(shape + " requires a non-empty update document");
         }
-        return MongoCommand.update(text, collection, filter, update, multi).withOptions(options(args, 2, "upsert", "arrayFilters"));
+        return MongoCommand.update(text, collection, filter, update, multi).withOptions(options(args, 2, "upsert", "arrayFilters", "hint", "collation", "writeConcern", "bypassDocumentValidation", "let", "comment"));
     }
 
     private MongoCommand buildDelete(String text, String collection, List<String> args, boolean multi) {
@@ -203,8 +265,8 @@ public class MongoCommandParser {
         if (args.isEmpty()) {
             throw new MongoCommandException(shape + " requires a filter document");
         }
-        requireAtMost(args, 1, shape);
-        return MongoCommand.delete(text, collection, parseJson(args.get(0), "filter"), multi);
+        requireAtMost(args, 2, shape);
+        return MongoCommand.delete(text, collection, parseJson(args.get(0), "filter"), multi).withOptions(options(args,1,"hint","collation","writeConcern","let","comment"));
     }
 
     private MongoCommand buildDrop(String text, String collection, List<String> args) {
@@ -219,22 +281,22 @@ public class MongoCommandParser {
         return MongoCommand.read(MongoCommand.Type.FIND_ONE, text, collection,
                 args.isEmpty() ? new Document() : parseJson(args.get(0), "filter"),
                 args.size() < 2 ? null : parseJson(args.get(1), "projection"), null)
-                .withOptions(options(args, 2, "sort", "maxTimeMS"));
+                .withOptions(options(args, 2, "sort", "maxTimeMS", "hint", "collation", "comment", "let"));
     }
 
     private MongoCommand buildCount(String text, String collection, List<String> args) {
         requireAtMost(args, 2, "countDocuments(filter, options)");
         return MongoCommand.read(MongoCommand.Type.COUNT, text, collection,
                 args.isEmpty() ? new Document() : parseJson(args.get(0), "filter"), null, null)
-                .withOptions(options(args, 1, "skip", "limit", "maxTimeMS"));
+                .withOptions(options(args, 1, "skip", "limit", "maxTimeMS", "hint", "collation", "comment"));
     }
 
     private MongoCommand buildDistinct(String text, String collection, List<String> args) {
         if (args.isEmpty()) throw new MongoCommandException("distinct requires a field name");
-        requireAtMost(args, 2, "distinct(field, filter)");
+        requireAtMost(args, 3, "distinct(field, filter, options)");
         return MongoCommand.read(MongoCommand.Type.DISTINCT, text, collection,
                 args.size() < 2 ? new Document() : parseJson(args.get(1), "filter"), null,
-                parseString(args.get(0), "field"));
+                parseString(args.get(0), "field")).withOptions(options(args,2,"collation","maxTimeMS","comment"));
     }
 
     private Object parseValue(String text) {
@@ -262,18 +324,45 @@ public class MongoCommandParser {
         Document options = parseJson(args.get(index), "options");
         for (var entry : options.entrySet()) {
             String key = entry.getKey(); Object value = entry.getValue();
-            if (!java.util.Set.of(allowed).contains(key)) throw new MongoCommandException("Unsupported option: " + key);
-            switch (key) {
-                case "skip", "limit", "maxTimeMS" -> entry.setValue(nonNegativeInteger(value, key));
-                case "sort" -> { if (!(value instanceof Document)) throw new MongoCommandException("sort must be a document"); }
-                case "arrayFilters" -> {
-                    if (!(value instanceof List<?> list) || list.stream().anyMatch(v -> !(v instanceof Document)))
-                        throw new MongoCommandException("arrayFilters must be an array of documents");
-                }
-                default -> { if (!(value instanceof Boolean)) throw new MongoCommandException(key + " must be boolean"); }
-            }
+            if (!new java.util.HashSet<>(java.util.List.of(allowed)).contains(key)) throw new MongoCommandException("Unsupported option: " + key);
+            MongoOptions.validate(key,value);
         }
         return options;
+    }
+
+    private MongoCommand buildMutation(String text,String collection,List<String> args,String op) {
+        boolean delete=op.equals("findOneAndDelete");
+        int index=delete?1:2;
+        if(args.size()<index)throw new MongoCommandException(op+" requires filter"+(delete?"":" and update/replacement"));
+        requireAtMost(args,index+1,op);
+        Document opts=options(args,index,delete?new String[]{"projection","sort","maxTimeMS","hint","collation","writeConcern","let","comment"}:
+                op.equals("replaceOne")?new String[]{"upsert","hint","collation","writeConcern","bypassDocumentValidation","let","comment"}:
+                new String[]{"projection","sort","maxTimeMS","hint","collation","writeConcern","bypassDocumentValidation","let","comment","upsert","returnDocument","returnNewDocument","arrayFilters"});
+        if(opts.containsKey("returnDocument") && opts.containsKey("returnNewDocument"))throw new MongoCommandException("Choose one return-document option");
+        if(!op.equals("findOneAndUpdate") && opts.containsKey("arrayFilters"))throw new MongoCommandException("arrayFilters requires update");
+        MongoCommand.Type type=switch(op) {case "replaceOne"->MongoCommand.Type.REPLACE;case "findOneAndUpdate"->MongoCommand.Type.FIND_AND_UPDATE;case "findOneAndReplace"->MongoCommand.Type.FIND_AND_REPLACE;default->MongoCommand.Type.FIND_AND_DELETE;};
+        boolean pipeline=!delete && args.get(1).trim().startsWith("[");
+        if(pipeline && (!op.equals("findOneAndUpdate") || opts.containsKey("arrayFilters")))throw new MongoCommandException("Invalid pipeline update options");
+        var c=MongoCommand.operation(type,text,collection,parseJson(args.get(0),"filter"),delete||pipeline?null:parseJson(args.get(1),"update"),opts);
+        if(pipeline)c.withUpdatePipeline(parseDocumentArray(args.get(1),"update pipeline"));
+        return c;
+    }
+
+    private MongoCommand buildBulk(String text,String collection,List<String> args) {
+        if(args.isEmpty())throw new MongoCommandException("bulkWrite requires operations");
+        requireAtMost(args,2,"bulkWrite");List<Document> operations=parseDocumentArray(args.get(0),"operations");
+        if(operations.isEmpty())throw new MongoCommandException("bulkWrite requires at least one operation");
+        MongoBulkSupport.models(operations); // validate the entire batch before any write
+        return MongoCommand.operation(MongoCommand.Type.BULK_WRITE,text,collection,null,null,
+                options(args,1,"ordered","bypassDocumentValidation","writeConcern","let","comment")).withDocuments(operations);
+    }
+    private MongoCommand buildIndex(String text,String collection,List<String> args,String op) {
+        if(op.equals("getIndexes")) {requireAtMost(args,0,op);return MongoCommand.operation(MongoCommand.Type.LIST_INDEXES,text,collection,null,null,new Document());}
+        if(args.isEmpty())throw new MongoCommandException(op+" requires a key or name");
+        if(op.equals("dropIndex")) {requireAtMost(args,1,op);return MongoCommand.operation(MongoCommand.Type.DROP_INDEX,text,collection,null,null,new Document("index",parseValue(args.get(0))));}
+        requireAtMost(args,2,op);
+        return MongoCommand.operation(MongoCommand.Type.CREATE_INDEX,text,collection,parseJson(args.get(0),"index keys"),null,
+                options(args,1,"name","unique","sparse","background","expireAfterSeconds","partialFilterExpression","collation","wildcardProjection","hidden","version","textVersion","sphereVersion","weights","defaultLanguage","languageOverride","storageEngine"));
     }
 
     private void requireAtMost(List<String> args, int max, String shape) {

@@ -1,4 +1,7 @@
 export function formatMongoCommand(command) {
+  // This formatter handles BSON command literals. Preserve general JavaScript
+  // verbatim: rewriting newlines can change automatic semicolon insertion.
+  if (!/^\s*db\./.test(command) || /[;`]|=>|\bfunction\b|\/\/|\/\*/.test(command)) return command
   let formatted = ''
   let indent = 0
   let inString = false
