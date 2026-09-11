@@ -10,6 +10,7 @@ public class SessionInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest req, HttpServletResponse resp, Object handler) throws Exception {
+        SessionManager.setContext(null);
         //0. 如果是登录请求，直接放行
         if (!req.getServletPath().startsWith("/api") || req.getServletPath().equals("/api/auth")) {
             return true;
@@ -24,8 +25,16 @@ public class SessionInterceptor implements HandlerInterceptor {
             return false;
         }
 
+        var session = SessionManager.getSession(token);
+        if (session instanceof org.jumpserver.chen.framework.session.impl.JMSSession jms && !jms.allowsExecution()) {
+            resp.setStatus(403); resp.getWriter().write("Session locked or expired"); return false;
+        }
         SessionManager.setContext(token);
         return true;
+    }
+    @Override
+    public void afterCompletion(HttpServletRequest req, HttpServletResponse resp, Object handler, Exception ex) {
+        SessionManager.setContext(null);
     }
 
 }

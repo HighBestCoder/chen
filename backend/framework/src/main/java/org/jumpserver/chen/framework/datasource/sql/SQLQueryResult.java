@@ -40,6 +40,8 @@ public class SQLQueryResult {
     // value was not produced by the streaming path (builder falls back).
     private long streamedSizeBytes = -1;
     private Map<String, Long> streamedSizeByColumn;
+    // Optional measurement paths when nested BSON is rendered as JSON cells.
+    private List<String> streamedImpactColumns;
     private String sizeStatsStatus;
     private String sizeStatsUnavailableReason;
     private String sizeByColumnSourceStatus;

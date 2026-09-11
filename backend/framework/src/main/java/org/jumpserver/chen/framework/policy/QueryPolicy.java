@@ -85,7 +85,7 @@ public class QueryPolicy {
      */
     public int resolveTimeoutSeconds(int requested) {
         if (requested <= 0) {
-            return this.defaultTimeoutSeconds;
+            return Math.min(this.defaultTimeoutSeconds, this.maxTimeoutSeconds);
         }
         return Math.min(requested, this.maxTimeoutSeconds);
     }

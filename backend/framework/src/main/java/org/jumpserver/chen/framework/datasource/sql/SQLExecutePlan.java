@@ -27,12 +27,15 @@ public class SQLExecutePlan {
     private SQLActuator sqlActuator;
     private String targetSQL;
     private final DbType druidDbType;
-    private Statement statement;
+    private volatile Statement statement;
+    private volatile boolean cancelRequested;
+    private java.util.List<Object> parameters = java.util.List.of();
+    private String quotedPreviewTable;
     private Connection connection;
     private ACLResult aclResult;
 
 
-    private boolean counted;
+    private Integer cachedCount;
 
     private boolean manualLimitDetected;
     private int queryLimit = -1;
@@ -50,7 +53,11 @@ public class SQLExecutePlan {
     }
 
     public void generateTargetSQL() throws SQLException {
+        this.cachedCount = null;
         this.targetSQL = this.sourceSQL;
+        this.manualLimitDetected = false;
+        this.queryLimit = -1;
+        this.limitSource = null;
 
         if (this.sqlQueryParams == null) {
             return;
@@ -81,7 +88,22 @@ public class SQLExecutePlan {
             return;
         }
 
+        if (quotedPreviewTable != null) {
+            // Druid corrupts embedded identifier delimiters when rendering ASTs.
+            // Only parse our fixed preview template; insert the already quoted
+            // table after rewriting, so neither names nor values become SQL syntax.
+            if (sqlQueryParams.getOffset() < 0) throw new SQLException(MessageUtils.get("msg.error.already_first_page"));
+            this.queryLimit = sqlQueryParams.getLimit();
+            this.limitSource = sqlQueryParams.getLimitSource() != null ? sqlQueryParams.getLimitSource() : "toolbar";
+            this.targetSQL = PageUtils.limit("SELECT * FROM __chen_preview_table__", druidDbType,
+                    sqlQueryParams.getOffset(), sqlQueryParams.getLimit()).replace("__chen_preview_table__", quotedPreviewTable);
+            int total = sqlActuator.count(this);
+            if (total > 0 && sqlQueryParams.getOffset() >= total) throw new SQLException(MessageUtils.get("msg.error.already_last_page"));
+            return;
+        }
+
         if (this.getTargetSQLStatement() instanceof SQLSelectStatement selectStatement) {
+            if (hasWrites(selectStatement)) return; // Display limits must never change writes.
             int manualLimit = PageUtils.getLimit(this.targetSQL, this.druidDbType);
             if (manualLimit > -1) {
                 this.manualLimitDetected = true;
@@ -92,7 +114,7 @@ public class SQLExecutePlan {
             this.queryLimit = this.getSqlQueryParams().getLimit();
             this.limitSource = this.sqlQueryParams.getLimitSource() != null
                     ? this.sqlQueryParams.getLimitSource() : "toolbar";
-            this.targetSQL = PageUtils.limit(selectStatement.toString(),
+            this.targetSQL = PageUtils.limit(this.sourceSQL,
                     this.druidDbType,
                     this.getSqlQueryParams().getOffset(),
                     this.getSqlQueryParams().getLimit());
@@ -111,6 +133,24 @@ public class SQLExecutePlan {
     }
 
 
+    public boolean isReloadableResult() {
+        var statement = getTargetSQLStatement();
+        return statement instanceof SQLSelectStatement && !hasWrites(statement);
+    }
+
+    private static boolean hasWrites(SQLStatement statement) {
+        final boolean[] writes = {false};
+        statement.accept(new com.alibaba.druid.sql.visitor.SQLASTVisitorAdapter() {
+            @Override public void preVisit(com.alibaba.druid.sql.ast.SQLObject node) {
+                if ((node instanceof com.alibaba.druid.sql.ast.statement.SQLSelectQueryBlock block && block.getInto() != null)
+                        || node instanceof com.alibaba.druid.sql.ast.statement.SQLInsertStatement
+                        || node instanceof com.alibaba.druid.sql.ast.statement.SQLUpdateStatement
+                        || node instanceof com.alibaba.druid.sql.ast.statement.SQLDeleteStatement) writes[0] = true;
+            }
+        });
+        return writes[0];
+    }
+
     public SQLQueryResult execute() throws SQLException {
         return this.sqlActuator.execute(this);
     }
@@ -121,18 +161,41 @@ public class SQLExecutePlan {
 
 
     public Statement createStatement() throws SQLException {
+        checkCancelled();
         if (this.statement == null || this.statement.isClosed()) {
-            this.statement = this.connection.createStatement();
+            if (parameters.isEmpty()) this.statement = this.connection.createStatement();
+            else {
+                var prepared = this.connection.prepareStatement(this.targetSQL);
+                this.statement = prepared;
+                try {
+                    for (int i = 0; i < parameters.size(); i++) prepared.setObject(i + 1, parameters.get(i));
+                } catch (SQLException failure) { prepared.close(); throw failure; }
+            }
         }
+        checkCancelled();
         return this.statement;
     }
 
     public SQLStatement getTargetSQLStatement() {
-        return SQLUtils.parseSingleStatement(this.targetSQL, this.druidDbType.name());
+        var statements = org.jumpserver.chen.framework.utils.SqlText.analyze(this.targetSQL, this.druidDbType);
+        if (statements.size() != 1) throw new com.alibaba.druid.sql.parser.ParserException("Expected one SQL statement");
+        return statements.get(0);
+    }
+
+    public void beginExecution() { this.cancelRequested = false; }
+
+    private void checkCancelled() throws SQLException {
+        if (cancelRequested) {
+            var active = this.statement;
+            if (active != null) active.close();
+            throw new SQLException("Query cancelled", "57014");
+        }
     }
 
     public void cancel() throws SQLException {
-        this.statement.cancel();
+        this.cancelRequested = true;
+        var active = this.statement;
+        if (active != null && !active.isClosed()) active.cancel();
     }
 
     public void close() {

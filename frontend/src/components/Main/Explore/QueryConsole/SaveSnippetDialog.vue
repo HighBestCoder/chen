@@ -13,7 +13,7 @@
 
     <span slot="footer" class="dialog-footer">
       <el-button @click="iVisible = false">{{ $tc('action.cancel') }}</el-button>
-      <el-button type="primary" @click="onSubmit">{{ $tc('action.confirm') }}</el-button>
+      <el-button type="primary" :loading="saving" @click="onSubmit">{{ $tc('action.confirm') }}</el-button>
     </span>
   </el-dialog>
 </template>
@@ -38,6 +38,7 @@ export default {
   },
   data() {
     return {
+      saving: false,
       form: {
         name: ''
       }
@@ -65,13 +66,19 @@ export default {
       return VueCookie.get(TOKEN_KEY)
     },
     onSubmit() {
+      if (this.saving) return
+      if (!this.form.name.trim() || !this.content.trim()) {
+        this.$message.error(this.$tc('message.command_required'))
+        return
+      }
       if (looksSensitiveCommand(this.content)) {
         this.$message.error(this.$tc('message.command_sensitive'))
         return
       }
       const csrfToken = this.getCsrfToken()
       const dbType = store.getters.profile?.dbType
-      axios.post('/api/v1/ops/adhocs/', {
+      this.saving = true
+      return axios.post('/api/v1/ops/adhocs/', {
         name: this.form.name,
         args: this.content,
         module: commandModuleForDb(dbType),
@@ -82,11 +89,12 @@ export default {
         }
       }).then(response => {
         this.$message.success(this.$tc('message.save_success'))
+        this.iVisible = false
       }).catch(error => {
         const data = error?.response?.data
         this.$message.error(data ? JSON.stringify(data) : error.message)
       }).finally(() => {
-        this.iVisible = false
+        this.saving = false
       })
     }
   }

@@ -11,6 +11,10 @@ public class TestMongoCommandParser {
         rejectsUnsupportedOperationsClearly();
         rejectsServerSideJavaScript();
         rejectsMalformedWrites();
+        rejectsIgnoredModifiersAndEmptyArguments();
+        parsesCursorModifiersInEitherOrder();
+        parsesEscapedBackslashBeforeArgumentBoundary();
+        validatesDecodedOperatorsWithoutRejectingLiteralText();
 
         if (failures > 0) {
             System.err.println("FAIL: " + failures + " case(s) failed");
@@ -97,6 +101,22 @@ public class TestMongoCommandParser {
                 "db.order.aggregate([{$addFields: {x: {$function: {body: \"f\"}}}}])", "not allowed");
     }
 
+    private static void validatesDecodedOperatorsWithoutRejectingLiteralText() {
+        // Assemble escapes at runtime: Java itself decodes Unicode escapes in source.
+        String escapedDollar = "\\" + "u0024";
+        expectFailure("escaped $where rejected",
+                "db.order.find({\"" + escapedDollar + "where\": \"true\"})", "not allowed");
+        expectFailure("escaped nested $function rejected",
+                "db.order.aggregate([{$project: {x: {\"" + escapedDollar + "function\": {body: 'f'}}}}])", "not allowed");
+        try {
+            var command = new MongoCommandParser().parse("db.order.find({note: 'eval $where mapReduce'})");
+            report("ordinary text is not executable code",
+                    "eval $where mapReduce".equals(command.getFilter().getString("note")), "literal retained", command.getFilter());
+        } catch (RuntimeException e) {
+            report("ordinary text accepted", false, "parsed", e.getMessage());
+        }
+    }
+
     private static void rejectsMalformedWrites() {
         expectFailure("updateOne without update doc",
                 "db.order.updateOne({sku: \"A-1\"})", "requires both");
@@ -119,6 +139,61 @@ public class TestMongoCommandParser {
         } catch (RuntimeException e) {
             report(label, e.getMessage() != null && e.getMessage().contains(expectedFragment),
                     expectedFragment, e.getMessage());
+        }
+    }
+
+    private static void rejectsIgnoredModifiersAndEmptyArguments() {
+        for (String command : new String[] {
+                "db.order.deleteMany({}).limit(1)",
+                "db.order.updateMany({}, {$set: {x: 1}}).sort({x: 1})",
+                "db.order.drop().limit(1)",
+                "db.order.aggregate([]).sort({x: 1})",
+                "db.order.aggregate([{$out: 'other'}]).limit(1)",
+                "db.order.aggregate([null])",
+                "db.order.deleteMany(,{})",
+                "db.order.updateMany({},,{$set: {x: 1}})",
+                "db.order.find({},)",
+                "db.order.find({}).limit(1).limit(2)"
+        }) {
+            try {
+                new MongoCommandParser().parse(command);
+                report("invalid command must not reach driver", false, "MongoCommandException", command);
+            } catch (org.jumpserver.chen.modules.mongodb.command.MongoCommandException expected) {
+                report("invalid command rejected", true, "MongoCommandException", command);
+            }
+        }
+        try {
+            new MongoCommandParser().parse("db.order.find({}).limit(9999999999999999999)");
+            report("overflow is a parse failure", false, "MongoCommandException", "accepted");
+        } catch (RuntimeException e) {
+            report("overflow is an audited parse failure",
+                    e instanceof org.jumpserver.chen.modules.mongodb.command.MongoCommandException,
+                    "MongoCommandException", e.getClass().getSimpleName());
+        }
+    }
+
+    private static void parsesCursorModifiersInEitherOrder() {
+        for (String suffix : new String[] {".sort({x: -1}).limit(3)", ".limit(3).sort({x: -1})"}) {
+            try {
+                var command = new MongoCommandParser().parse("db.order.find({note: '.sort({x:1})'})" + suffix);
+                report("cursor order preserves limit", Integer.valueOf(3).equals(command.getLimit()), 3, command.getLimit());
+                report("cursor order preserves sort", Integer.valueOf(-1).equals(command.getSort().get("x")), -1, command.getSort());
+            } catch (RuntimeException e) {
+                report("valid cursor order accepted", false, "parsed", e.getMessage());
+            }
+        }
+    }
+
+    private static void parsesEscapedBackslashBeforeArgumentBoundary() {
+        // BSON filter value ends with one literal backslash, encoded as two.
+        String command = "db.order.updateOne({path: \"C:\\\\\"}, {$set: {ok: true}})";
+        try {
+            var parsed = new MongoCommandParser().parse(command);
+            report("escaped backslash does not swallow next argument",
+                    "C:\\".equals(parsed.getFilter().getString("path")) && parsed.getUpdate().containsKey("$set"),
+                    "filter and update", parsed.getFilter());
+        } catch (RuntimeException e) {
+            report("escaped backslash accepted", false, "parsed", e.getMessage());
         }
     }
 

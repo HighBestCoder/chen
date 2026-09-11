@@ -37,10 +37,11 @@
                 <executions>
                     <execution>
                         <id>main-class-placement</id>
-                        <phase>generate-resources</phase>
+                        <phase>process-resources</phase>
                         <configuration>
                             <target>
-                                <copy todir="src/main/resources/static">
+                                <delete dir="${project.build.outputDirectory}/static"/>
+                                <copy todir="${project.build.outputDirectory}/static">
                                     <fileset dir="../../frontend/dist"/>
                                 </copy>
                             </target>

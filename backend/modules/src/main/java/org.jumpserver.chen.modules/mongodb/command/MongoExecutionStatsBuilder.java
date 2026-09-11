@@ -25,6 +25,10 @@ public final class MongoExecutionStatsBuilder {
     public static ExecutionStats fromSuccess(MongoConnectionManager cm, MongoCommand command, SQLQueryResult result) {
         ExecutionStats stats = baseStats(cm, command);
         stats.setSuccess(Boolean.TRUE);
+        org.bson.Document options = command.getType() == MongoCommand.Type.COMMAND ? command.getDatabaseCommand() : command.getOptions();
+        if(options.containsKey("writeConcern") && !MongoOptions.writeConcern(options.get("writeConcern",org.bson.Document.class)).isAcknowledged()) {
+            stats.setSuccess(null);stats.putExtra("write_acknowledged",false);
+        }
         if (result == null) {
             return stats;
         }
@@ -38,17 +42,28 @@ public final class MongoExecutionStatsBuilder {
             if (result.getTotal() >= 0) {
                 stats.setTotalRows((long) result.getTotal());
             }
-            stats.setImpactColumns(result.getFields().stream()
+            stats.setImpactColumns(result.getStreamedImpactColumns() != null
+                    ? result.getStreamedImpactColumns() : result.getFields().stream()
                     .map(f -> f.getName())
                     .filter(n -> n != null && !n.isEmpty())
                     .collect(Collectors.toList()));
             applySizeStats(stats, result, data);
-            applyColumnSizeStats(stats, result.getFields(), data);
+            if (result.getStreamedSizeByColumn() != null) {
+                stats.putExtra("size_by_column", new LinkedHashMap<>(result.getStreamedSizeByColumn()));
+                stats.putExtra("column_size", new LinkedHashMap<>(result.getStreamedSizeByColumn()));
+                stats.putExtra("size_by_column_source_status", result.getSizeByColumnSourceStatus());
+                stats.putExtra("size_measurement", "utf8_leaf_values_v2");
+            } else if (SizeCalculator.STATUS_UNAVAILABLE.equals(result.getSizeByColumnSourceStatus())) {
+                stats.putExtra("size_by_column_source_status", SizeCalculator.STATUS_UNAVAILABLE);
+                stats.putExtra("size_by_column_source_unavailable_reason", result.getSizeByColumnSourceUnavailableReason());
+            } else {
+                applyColumnSizeStats(stats, result.getFields(), data);
+            }
         } else {
             // Writes and `use <db>` produce no result set; the affected-row
             // count is the only volume figure they carry, and it is reported
             // through the same field the relational builder uses.
-            stats.setAffectedRows((long) result.getUpdateCount());
+            if (result.getUpdateCount() >= 0) stats.setAffectedRows((long) result.getUpdateCount());
         }
         return stats;
     }
@@ -63,7 +78,7 @@ public final class MongoExecutionStatsBuilder {
         long measured = result.getStreamedSizeBytes();
         String status = result.getSizeStatsStatus();
         String unavailableReason = result.getSizeStatsUnavailableReason();
-        if (measured < 0) {
+        if (measured < 0 && !SizeCalculator.STATUS_UNAVAILABLE.equals(status)) {
             SizeCalculator.Result size = SizeCalculator.compute(result.getFields(), data);
             measured = size.sizeBytes;
             status = size.status;
@@ -120,6 +135,12 @@ public final class MongoExecutionStatsBuilder {
     public static ExecutionStats fromFailure(MongoConnectionManager cm, MongoCommand command, Throwable error) {
         ExecutionStats stats = baseStats(cm, command);
         stats.setSuccess(Boolean.FALSE);
+        if (error instanceof com.mongodb.MongoBulkWriteException bulk && bulk.getWriteResult().wasAcknowledged()) {
+            var partial = bulk.getWriteResult();
+            stats.setAffectedRows((long) partial.getInsertedCount() + partial.getModifiedCount() + partial.getDeletedCount() + partial.getUpserts().size());
+            stats.putExtra("partial_write", true);
+            stats.putExtra("write_error_indices", bulk.getWriteErrors().stream().map(com.mongodb.bulk.BulkWriteError::getIndex).toList());
+        }
         if (error != null) {
             String errorType = error.getClass().getSimpleName();
             stats.setErrorMessage(errorType);
@@ -164,7 +185,20 @@ public final class MongoExecutionStatsBuilder {
             return "OTHER";
         }
         return switch (type) {
+            case SCRIPT -> "SCRIPT";
+            case COMMAND -> "COMMAND";
+            case REPLACE -> "REPLACE";
+            case FIND_AND_UPDATE -> "FIND_AND_UPDATE";
+            case FIND_AND_REPLACE -> "FIND_AND_REPLACE";
+            case FIND_AND_DELETE -> "FIND_AND_DELETE";
+            case BULK_WRITE -> "BULK_WRITE";
+            case CREATE_INDEX -> "CREATE_INDEX";
+            case LIST_INDEXES -> "LIST_INDEXES";
+            case DROP_INDEX -> "DROP_INDEX";
             case FIND -> "FIND";
+            case FIND_ONE -> "FIND_ONE";
+            case COUNT -> "COUNT";
+            case DISTINCT -> "DISTINCT";
             case AGGREGATE -> "AGGREGATE";
             case SHOW_DBS, SHOW_COLLECTIONS -> "SHOW";
             case USE_DB -> "USE";

@@ -18,6 +18,13 @@ public class ClickhouseConnectionManager extends BaseConnectionManager {
     }
 
     @Override
+    protected void configureConnectionProperties(java.util.Properties props) {
+        super.configureConnectionProperties(props);
+        // The bundled JDBC jar has no LZ4 runtime. Keep the default usable without it.
+        props.putIfAbsent("compress", "0");
+    }
+
+    @Override
     public String getDriverClassName() {
         return "com.clickhouse.jdbc.ClickHouseDriver";
     }

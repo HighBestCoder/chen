@@ -21,7 +21,7 @@ import java.util.stream.Collectors;
 public final class SqlExecutionStatsBuilder {
 
     private static final Pattern LEADING_KEYWORD =
-            Pattern.compile("^\\s*(/\\*.*?\\*/\\s*)*([A-Za-z]+)", Pattern.DOTALL);
+            Pattern.compile("^\\s*((?:/\\*.*?\\*/|--[^\\r\\n]*(?:\\r?\\n|$))\\s*)*([A-Za-z]+)", Pattern.DOTALL);
 
     private SqlExecutionStatsBuilder() {
     }
@@ -172,6 +172,7 @@ public final class SqlExecutionStatsBuilder {
     private static ExecutionStats baseStats(Datasource datasource, String command) {
         ExecutionStats stats = new ExecutionStats();
         stats.setEngineType("sql");
+        stats.setRawCommand(command);
         stats.setOpType(detectOpType(command));
 
         if (datasource != null) {
@@ -209,8 +210,19 @@ public final class SqlExecutionStatsBuilder {
         }
         String kw = m.group(2).toUpperCase();
         switch (kw) {
-            case "SELECT":
             case "WITH":
+                try {
+                    var statements = org.jumpserver.chen.framework.utils.SqlText.analyze(command, com.alibaba.druid.DbType.postgresql);
+                    if (statements.size() == 1) {
+                        var statement = statements.get(0);
+                        if (statement instanceof com.alibaba.druid.sql.ast.statement.SQLUpdateStatement) return "UPDATE";
+                        if (statement instanceof com.alibaba.druid.sql.ast.statement.SQLDeleteStatement) return "DELETE";
+                        if (statement instanceof com.alibaba.druid.sql.ast.statement.SQLInsertStatement) return "INSERT";
+                        if (statement instanceof com.alibaba.druid.sql.ast.statement.SQLSelectStatement) return "SELECT";
+                    }
+                } catch (RuntimeException ignored) { }
+                return "OTHER";
+            case "SELECT":
             case "SHOW":
             case "EXPLAIN":
             case "DESC":

@@ -73,6 +73,12 @@ public interface Session {
     // 在有审计的情况下执行命令
     SQLQueryResult withAudit(String command, QueryAuditFunction queryAuditFunction) throws SQLException, CommandRejectException;
 
+    default SQLQueryResult withAudit(String command, String namespace, QueryAuditFunction action) throws SQLException, CommandRejectException {
+        return withAudit(command, action);
+    }
+
+    default void beginCommand(CommandRecord record) { }
+
     void recordCommand(String command);
 
     void recordCommand(CommandRecord commandRecord);
@@ -80,6 +86,10 @@ public interface Session {
     ACLResult checkACL(String command);
 
     ACLResult checkACL(String command, Connection connection);
+
+    default ACLResult checkACLBatch(String command, java.util.List<String> statements, Connection connection) {
+        return checkACL(command, connection);
+    }
 
     boolean enableAutoComplete();
 

@@ -12,16 +12,10 @@ export function parseFieldType(t) {
 }
 
 export function getUrlParams(url) {
-  if (url.indexOf('?') === -1) {
+  const queryStart = url.indexOf('?')
+  const fragmentStart = url.indexOf('#')
+  if (queryStart < 0 || (fragmentStart >= 0 && fragmentStart < queryStart)) {
     return {}
   }
-  const urlStr = url.split('?')[1]
-  const obj = {}
-  const paramsArr = urlStr.split('&')
-  for (let i = 0, len = paramsArr.length; i < len; i++) {
-    const arr = paramsArr[i].split('=')
-    obj[arr[0]] = arr[1]
-  }
-  return obj
+  return Object.fromEntries(new URLSearchParams(url.slice(queryStart + 1).split('#')[0]))
 }
-

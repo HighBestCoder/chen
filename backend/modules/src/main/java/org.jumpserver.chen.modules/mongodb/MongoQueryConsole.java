@@ -18,6 +18,7 @@ import org.jumpserver.chen.framework.jms.impl.ACLFilterImpl;
 import org.jumpserver.chen.framework.session.SessionManager;
 import org.jumpserver.chen.framework.ws.io.Packet;
 import org.jumpserver.chen.modules.mongodb.command.MongoActuator;
+import org.jumpserver.chen.modules.mongodb.command.MongoQueryLoader;
 import org.jumpserver.chen.modules.mongodb.command.MongoCommand;
 import org.jumpserver.chen.modules.mongodb.command.MongoCommandException;
 import org.jumpserver.chen.modules.mongodb.command.MongoCommandParser;
@@ -35,6 +36,7 @@ public class MongoQueryConsole extends AbstractConsole {
     private final MongoCommandParser parser = new MongoCommandParser();
     private final MongoActuator actuator;
     private StateManager<QueryConsoleState> stateManager;
+    private int selectedLimit = 50;
     private final Map<String, DataView> dataViews = new HashMap<>();
 
     public MongoQueryConsole(MongoDatasource datasource, WebSocketSession ws, String nodeKey) {
@@ -45,12 +47,10 @@ public class MongoQueryConsole extends AbstractConsole {
     }
 
     private static int generateConsoleName() {
+        var titles = SessionManager.getCurrentSession().getConsoles().values().stream()
+                .map(c -> c.getTitle()).collect(java.util.stream.Collectors.toSet());
         int num = 1;
-        for (var console : SessionManager.getCurrentSession().getConsoles().values()) {
-            if (console instanceof MongoQueryConsole) {
-                ++num;
-            }
-        }
+        while (titles.contains("Query-" + num)) num++;
         return num;
     }
 
@@ -100,14 +100,15 @@ public class MongoQueryConsole extends AbstractConsole {
             case QueryConsoleAction.ACTION_RUN_SQL -> {
                 this.getState().setInQuery(true);
                 this.stateManager.commit();
-                this.onCommand((String) action.getData());
-                this.getState().setInQuery(false);
-                this.stateManager.commit();
+                try {
+                    this.onCommand((String) action.getData());
+                } finally {
+                    this.getState().setInQuery(false);
+                    this.stateManager.commit();
+                }
             }
             case QueryConsoleAction.ACTION_CANCEL -> {
                 this.getConsoleLogger().info("Cancel is not supported for MongoDB queries in this console");
-                this.getState().setInQuery(false);
-                this.stateManager.commit();
             }
             case QueryConsoleAction.ACTION_CHANGE_CURRENT_CONTEXT -> {
                 var db = (String) action.getData();
@@ -130,12 +131,10 @@ public class MongoQueryConsole extends AbstractConsole {
                     session.getUsername(), aclResult.getRiskLevel(), aclResult.getRiskAction(),
                     aclResult.getCmdAclId(), aclResult.getCmdGroupId(), aclResult.getTicketId());
         }
-        if (aclResult != null
-                && (aclResult.getRiskLevel() == Common.RiskLevel.Reject
-                || aclResult.getRiskLevel() == Common.RiskLevel.ReviewReject)) {
+        if (aclResult != null && !aclResult.allows(commandText)) {
             log.warn("Mongo command rejected by ACL: user={} riskLevel={} aclId={} command={}",
                     session.getUsername(), aclResult.getRiskLevel(), aclResult.getCmdAclId(), commandText);
-            this.getConsoleLogger().error("Command rejected by ACL");
+            this.getConsoleLogger().error(aclResult.denialMessage());
             CommandRecord rejected = new CommandRecord(commandText);
             rejected.applyACL(aclResult);
             rejected.setError("Command rejected by ACL");
@@ -145,22 +144,6 @@ public class MongoQueryConsole extends AbstractConsole {
             session.recordCommand(rejected);
             return;
         }
-        if (aclResult != null && aclResult.getApprovedCommandHash() != null
-                && !aclResult.getApprovedCommandHash().equals(ACLFilterImpl.commandHash(commandText))) {
-            log.warn("Mongo approved-command hash mismatch: user={} ticket={} approved={} actual={}",
-                    session.getUsername(), aclResult.getTicketId(), aclResult.getApprovedCommandHash(),
-                    ACLFilterImpl.commandHash(commandText));
-            this.getConsoleLogger().error("Approved command hash mismatch");
-            CommandRecord rejected = new CommandRecord(commandText);
-            rejected.applyACL(aclResult);
-            rejected.setError("approved command hash mismatch");
-            rejected.setExecutionStats(
-                    MongoExecutionStatsBuilder.fromFailure(this.connectionManager, commandText,
-                            new MongoCommandException("approved command hash mismatch")));
-            session.recordCommand(rejected);
-            return;
-        }
-
         final MongoCommand command;
         try {
             command = this.parser.parse(commandText);
@@ -178,30 +161,30 @@ public class MongoQueryConsole extends AbstractConsole {
             return;
         }
 
-        if (command.getType() == MongoCommand.Type.USE_DB) {
-            this.getState().setCurrentContext(command.getTargetDatabase());
-            this.stateManager.commit();
-        }
-
-        CommandRecord record = new CommandRecord(commandText);
-        record.applyACL(aclResult);
         try {
             DataView dataView = new DataView(command.getRawText(), this.getPacketIO(), this.getConsoleLogger());
             dataView.setSql(command.getRawText());
+            dataView.getState().setMaxDisplayLimit(Math.min(1000, dataView.getState().getMaxDisplayLimit()));
+            dataView.getState().setLimit(Math.min(selectedLimit, dataView.getState().getMaxDisplayLimit()));
+            MongoQueryLoader loader = new MongoQueryLoader(session, this.connectionManager,
+                    this.actuator, command, aclResult, commandText);
             dataView.setLoadDataInterface((params, sink) -> {
-                var result = this.actuator.execute(command, params.getOffset(), params.getLimit());
-                log.info("Mongo command executed: user={} opType={} db={} collection={} rows={} affected={}",
-                        session.getUsername(), command.getType(), this.connectionManager.getCurrentDatabaseName(),
-                        command.getCollection(),
-                        result.isHasResultSet() ? result.getData().size() : -1,
-                        result.isHasResultSet() ? -1 : result.getUpdateCount());
-                this.getConsoleLogger().success(result);
-                record.setOutput(result);
-                record.setExecutionStats(
-                        MongoExecutionStatsBuilder.fromSuccess(this.connectionManager, command, result));
+                var result = loader.loadData(params, sink);
+                if (!result.isHasResultSet() && result.getUpdateCount() < 0) {
+                    this.getConsoleLogger().success(result.getOutput());
+                } else {
+                    this.getConsoleLogger().success(result);
+                }
+                if (result.isTruncated()) {
+                    this.getConsoleLogger().warn("Result truncated at the MongoDB console row limit");
+                }
                 return result;
             });
             dataView.loadData();
+            if (command.getType() == MongoCommand.Type.USE_DB) {
+                this.getState().setCurrentContext(this.connectionManager.getCurrentDatabaseName());
+                this.stateManager.commit();
+            }
 
             if (!dataView.isHasTable()) {
                 this.getConsoleLogger().success("Command OK");
@@ -212,12 +195,7 @@ public class MongoQueryConsole extends AbstractConsole {
             log.warn("Mongo command execution failed: user={} opType={} command={} error={}",
                     session.getUsername(), command.getType(), commandText, e.toString());
             this.getConsoleLogger().error("execute error: %s", e.getMessage());
-            this.getPacketIO().sendPacket("message", Message.error("Execute error", e.getMessage()));
-            record.setError(e.getMessage());
-            record.setExecutionStats(
-                    MongoExecutionStatsBuilder.fromFailure(this.connectionManager, command, e));
-        } finally {
-            session.recordCommand(record);
+            this.getPacketIO().sendPacket("message", Message.error("Execute error", e));
         }
     }
 
@@ -243,9 +221,10 @@ public class MongoQueryConsole extends AbstractConsole {
             dataView.getStateManager().getState().setLoading(true);
             dataView.getStateManager().commit();
             dataView.doAction(action);
+            selectedLimit = dataView.getStateManager().getState().getLimit();
             this.getPacketIO().sendPacket("update_data_view", new UpdateDataView(action.getDataView(), dataView.getData()));
         } catch (Exception e) {
-            this.getMessager().send(Message.error("Fetch error", e.getMessage()));
+            this.getMessager().send(Message.error("Fetch error", e));
         } finally {
             dataView.getStateManager().getState().setLoading(false);
             dataView.getStateManager().commit();

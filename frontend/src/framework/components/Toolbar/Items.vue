@@ -1,6 +1,6 @@
 <template>
   <div>
-    <span v-for="item in items" :key="item.name && item.name()">
+    <span v-for="(item, key) in items" :key="key">
       <span v-if="item.split" class="split" />
       <el-tooltip
         :content="item.tip"

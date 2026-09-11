@@ -9,12 +9,18 @@ export const MESSAGES = {
 
 export class LunaEvent {
   init() {
-    window.addEventListener('message',
-      this.handleEventFromLuna.bind(this),
-      false)
+    this.destroy()
+    this.listener = this.handleEventFromLuna.bind(this)
+    window.addEventListener('message', this.listener, false)
+  }
+
+  destroy() {
+    if (this.listener) window.removeEventListener('message', this.listener, false)
+    this.listener = null
   }
 
   handleEventFromLuna(event) {
+    if (event.source !== window.parent || !event.data || typeof event.data !== 'object') return
     const msg = event.data
     switch (msg.name) {
       case MESSAGES.PING:

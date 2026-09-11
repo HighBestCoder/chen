@@ -47,14 +47,15 @@ public class JMSSession extends BaseSession {
     private final List<Common.CommandACL> commandACLs;
     private final long maxIdleTimeDelta;
     private final long expireTime;
-    private long lastActiveTime;
+    private volatile long lastActiveTime;
+    private long startedAt;
 
     private int maxSessionTime;
     private Thread waitIdleTimeThread;
     @Setter
     private String gatewayId;
 
-    private boolean locked = false;
+    private volatile boolean locked = false;
 
     private boolean canUpload = false;
     private boolean canDownload = false;
@@ -62,18 +63,28 @@ public class JMSSession extends BaseSession {
     private boolean canCopy = false;
     private boolean canPaste = false;
 
-    private boolean closed = false;
+
 
     public void lockSession(String creator) {
+        String previous = SessionManager.getContextToken();
         SessionManager.setContext(this.getWebToken());
-        this.getController().showMessage(MessageLevel.ERROR, MessageUtils.get("msg.dialog.session_locked", creator));
         this.locked = true;
+        try {
+            this.getController().showMessage(MessageLevel.ERROR, MessageUtils.get("msg.dialog.session_locked", creator));
+
+        } finally { SessionManager.setContext(previous); }
+
     }
 
     public void unloadSession(String creator) {
+        String previous = SessionManager.getContextToken();
         SessionManager.setContext(this.getWebToken());
-        this.getController().showMessage(MessageLevel.SUCCESS, MessageUtils.get("msg.dialog.session_unlocked", creator));
         this.locked = false;
+        try {
+            this.getController().showMessage(MessageLevel.SUCCESS, MessageUtils.get("msg.dialog.session_unlocked", creator));
+
+        } finally { SessionManager.setContext(previous); }
+
     }
 
 
@@ -95,6 +106,15 @@ public class JMSSession extends BaseSession {
         this.canPaste = tokenResp.getData().getPermission().getEnablePaste();
     }
 
+    public boolean allowsCredentialRenewal() {
+        long now = System.currentTimeMillis();
+        long start = this.jmsSession.getDateStart() * 1000;
+        long last = this.lastActiveTime > 0 ? this.lastActiveTime : start;
+        return !isClosed() && !locked && now < this.expireTime * 1000
+                && now - start < (long) this.maxSessionTime * 3600000
+                && now - last < this.maxIdleTimeDelta * 60000;
+    }
+
     @Override
     public void recordCommand(String command) {
         CommandRecord commandRecord = new CommandRecord(command);
@@ -103,15 +123,35 @@ public class JMSSession extends BaseSession {
 
     @Override
     public ACLResult checkACL(String command) {
-        return this.aclFilter.commandACLFilter(command, null);
+        return checkACL(command, null);
     }
 
     public ACLResult checkACL(String command, Connection connection) {
-        return this.aclFilter.commandACLFilter(command, connection);
+        return checkACLBatch(command, java.util.List.of(), connection);
+    }
+
+    public boolean allowsExecution() { return isActive() && allowsCredentialRenewal(); }
+
+    @Override
+    public ACLResult checkACLBatch(String command, java.util.List<String> statements, Connection connection) {
+        if (!allowsExecution()) return deniedExecution();
+        var result = this.aclFilter.commandACLFilterBatch(command, statements, connection);
+        return allowsExecution() ? result : deniedExecution();
+    }
+
+    private static ACLResult deniedExecution() {
+        var result = new ACLResult();
+        result.setRiskLevel(Common.RiskLevel.Reject);
+        result.setRiskAction("session_unavailable");
+        return result;
     }
 
     @Override
+    public void beginCommand(CommandRecord record) { this.commandHandler.beginCommand(record); }
+
+    @Override
     public void recordCommand(CommandRecord commandRecord) {
+        if (allowsExecution()) this.lastActiveTime = System.currentTimeMillis();
         this.commandHandler.recordCommand(commandRecord);
     }
 
@@ -145,7 +185,8 @@ public class JMSSession extends BaseSession {
     }
 
     @Override
-    public void activeSession(PacketIO packetIO) {
+    public synchronized void activeSession(PacketIO packetIO) {
+        if (isClosed()) throw new IllegalStateException("Session is closed");
         this.commandHandler = new CommandHandlerImpl(this.jmsSession, this.serviceBlockingStub);
         this.replayHandler = new ReplayHandlerImpl(this.jmsSession, this.serviceBlockingStub);
         this.aclFilter = new ACLFilterImpl(this.jmsSession, this.serviceBlockingStub, this.commandACLs);
@@ -162,13 +203,15 @@ public class JMSSession extends BaseSession {
                 .setEvent(eventType)
                 .setReason(reason)
                 .build();
-        var resp = this.serviceBlockingStub.recordSessionLifecycleLog(req);
+        var resp = this.serviceBlockingStub.withDeadlineAfter(15, java.util.concurrent.TimeUnit.SECONDS).recordSessionLifecycleLog(req);
         if (!resp.getStatus().getOk()) {
             log.error("recordLifecycle error: {}", resp.getStatus().getErr());
         }
     }
 
     private void startWaitIdleTime() {
+        this.startedAt = this.jmsSession.getDateStart() > 0
+                ? this.jmsSession.getDateStart() * 1000 : System.currentTimeMillis();
         this.lastActiveTime = System.currentTimeMillis();
         this.waitIdleTimeThread = new Thread(() -> {
             while (this.isActive()) {
@@ -186,47 +229,52 @@ public class JMSSession extends BaseSession {
                             return;
                         }
 
-                        if (now - this.lastActiveTime > (long) this.maxSessionTime * 1000 * 60 * 60) {
+                        if (now - this.startedAt > (long) this.maxSessionTime * 1000 * 60 * 60) {
                             this.close("msg.error.over_max_session_time", "max_session_timeout",this.maxSessionTime);
                             return;
                         }
                     }
                 } catch (InterruptedException e) {
-                    log.info("JMSSession waitIdleTimeThread interrupted, close it");
+                    Thread.currentThread().interrupt();
+                    return;
                 }
             }
         });
+        this.waitIdleTimeThread.setDaemon(true);
         this.waitIdleTimeThread.start();
     }
 
     @Override
-    public void close() {
-        try {
-            this.replayHandler.release();
-            this.finishedJmsSession();
-            this.closeGateway();
-            if (!this.closed) {
-                this.recordLifecycle(ServiceOuterClass.SessionLifecycleLogRequest.EventType.AssetConnectFinished, "connect_disconnect");
-            }
+    public void close() { closeInternal("connect_disconnect"); }
 
+    private void closeInternal(String reason) {
+        if (!beginClose()) return;
+        if (waitIdleTimeThread != null && waitIdleTimeThread != Thread.currentThread()) waitIdleTimeThread.interrupt();
+        try {
+            cleanup("replay", () -> { if (replayHandler != null) replayHandler.release(); });
+            cleanup("Core session", this::finishedJmsSession);
+            cleanup("gateway", this::closeGateway);
+            cleanup("lifecycle", () -> recordLifecycle(ServiceOuterClass.SessionLifecycleLogRequest.EventType.AssetConnectFinished, reason));
         } finally {
-            super.close();
+            closeResources();
         }
     }
 
     public void close(String message, String reason, Object... args) {
+        String previous = SessionManager.getContextToken();
         SessionManager.setContext(this.getWebToken());
-
-        this.getPacketIO().sendPacket("session_close", null);
-
-        var dialog = new Dialog(MessageUtils.get("msg.dialog.title.session_finished"));
-        dialog.setBody(MessageUtils.get(message, args));
-        this.getController().showDialog(dialog);
-
-        this.recordLifecycle(ServiceOuterClass.SessionLifecycleLogRequest.EventType.AssetConnectFinished, reason);
-        this.closed = true;
-
-        this.close();
+        try {
+            if (isClosed()) return;
+            if (getPacketIO() != null && isActive()) {
+                getPacketIO().sendPacket("session_close", null);
+                var dialog = new Dialog(MessageUtils.get("msg.dialog.title.session_finished"));
+                dialog.setBody(MessageUtils.get(message, args));
+                getController().showDialog(dialog);
+            }
+        } finally {
+            try { closeInternal(reason); }
+            finally { SessionManager.setContext(previous); }
+        }
     }
 
     private void finishedJmsSession() {
@@ -235,7 +283,7 @@ public class JMSSession extends BaseSession {
                 .setId(this.jmsSession.getId())
                 .setDateEnd(Instant.now().getEpochSecond())
                 .build();
-        var resp = this.serviceBlockingStub.finishSession(req);
+        var resp = this.serviceBlockingStub.withDeadlineAfter(15, java.util.concurrent.TimeUnit.SECONDS).finishSession(req);
         if (!resp.getStatus().getOk()) {
             throw new SessionException(this.getUsername(), resp.getStatus().getErr());
         }
@@ -251,7 +299,7 @@ public class JMSSession extends BaseSession {
                 .newBuilder()
                 .setId(this.gatewayId)
                 .build();
-        var resp = this.serviceBlockingStub.deleteForward(req);
+        var resp = this.serviceBlockingStub.withDeadlineAfter(15, java.util.concurrent.TimeUnit.SECONDS).deleteForward(req);
         if (!resp.getStatus().getOk()) {
             log.error("close gateway error: {}", resp.getStatus().getErr());
         }
@@ -260,14 +308,18 @@ public class JMSSession extends BaseSession {
 
     @Override
     public SQLQueryResult withAudit(String command, QueryAuditFunction queryAuditFunction) throws SQLException, CommandRejectException {
+        return withAudit(command, null, queryAuditFunction);
+    }
+
+    @Override
+    public SQLQueryResult withAudit(String command, String namespace, QueryAuditFunction queryAuditFunction) throws SQLException, CommandRejectException {
         synchronized (this) {
+            if (!allowsExecution()) throw new CommandRejectException(MessageUtils.get("msg.error.session_unavailable"));
             this.lastActiveTime = System.currentTimeMillis();
-        }
-        if (this.locked) {
-            throw new CommandRejectException(MessageUtils.get("msg.error.session_locked"));
         }
 
         CommandRecord commandRecord = new CommandRecord(command);
+        this.beginCommand(commandRecord);
 
         try {
             this.replayHandler.writeInput(commandRecord.getInput());
@@ -279,6 +331,7 @@ public class JMSSession extends BaseSession {
 
             try {
                 ExecutionStats stats = SqlExecutionStatsBuilder.fromSuccess(this.getDatasource(), command, result);
+                if (namespace != null && !namespace.isBlank()) stats.setNamespace(namespace);
                 commandRecord.setExecutionStats(stats);
             } catch (Throwable statsErr) {
                 log.warn("withAudit: failed to build success ExecutionStats, continuing without it", statsErr);
@@ -287,10 +340,11 @@ public class JMSSession extends BaseSession {
             this.replayHandler.writeOutput(result.getOutput());
             return result;
 
-        } catch (SQLException e) {
+        } catch (SQLException | RuntimeException e) {
             commandRecord.setError(e.getMessage());
             try {
                 ExecutionStats stats = SqlExecutionStatsBuilder.fromFailure(this.getDatasource(), command, e);
+                if (namespace != null && !namespace.isBlank()) stats.setNamespace(namespace);
                 commandRecord.setExecutionStats(stats);
             } catch (Throwable statsErr) {
                 log.warn("withAudit: failed to build failure ExecutionStats, continuing without it", statsErr);

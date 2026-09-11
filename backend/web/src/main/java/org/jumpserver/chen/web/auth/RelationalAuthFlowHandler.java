@@ -117,9 +117,16 @@ public final class RelationalAuthFlowHandler {
             return new Decision(Outcome.LEGACY_PASSWORD, normalizedDbType, routeName, "null_route");
         }
 
+        if (route != AuthFlowDispatcher.Route.UNKNOWN && !authSpec.hasEntraToken()
+                && ("password".equalsIgnoreCase(authSpec.authType()) || "direct_password".equalsIgnoreCase(authSpec.authSource()))) {
+            return new Decision(Outcome.LEGACY_PASSWORD, normalizedDbType, routeName, "explicit_password_account");
+        }
         switch (route) {
             case LEGACY -> {
-                if (authSpec.isCorePocToken()) {
+                if (authSpec.hasEntraToken() && !TOKEN_AS_PASSWORD_DB_TYPES.contains(normalizedDbType)) {
+                    return new Decision(Outcome.UNSUPPORTED, normalizedDbType, routeName, "legacy_token_not_supported");
+                }
+                if (authSpec.hasEntraToken()) {
                     return new Decision(Outcome.LEGACY_TOKEN_AS_PASSWORD, normalizedDbType, routeName, "legacy_core_poc_token");
                 }
                 return new Decision(Outcome.LEGACY_PASSWORD, normalizedDbType, routeName, "legacy_no_token");

@@ -17,6 +17,7 @@ public class ProfileController {
         var connectionInfo = ds.getConnectInfo();
         Profile profile = new Profile();
         profile.setDbType(connectionInfo.getDbType());
+        profile.setAssetName(SessionManager.getCurrentSession().getDatasourceName());
         profile.setCanCopy(SessionManager.getCurrentSession().canCopy());
         profile.setCanPaste(SessionManager.getCurrentSession().canPaste());
         return profile;

@@ -107,6 +107,9 @@ public class SQLServerConnectionManager extends BaseConnectionManager {
         props.remove("trustCertificateKeyStoreUrl");
         props.remove("trustCertificateKeyStorePassword");
 
+        if (getConnectInfo().getProxyHost()!=null) props.setProperty("hostNameInCertificate", getConnectInfo().getHost());
+        if (StringUtils.isNotBlank((String)options.get("clientCert")))
+            throw new IllegalArgumentException("SQL Server TLS client certificates are not supported on this connection path; configure Entra certificates on the account");
         boolean useSSL = Boolean.TRUE.equals(options.get("useSSL"));
         if (!useSSL) {
             props.setProperty("encrypt", "false");
@@ -114,7 +117,7 @@ public class SQLServerConnectionManager extends BaseConnectionManager {
         }
 
         props.setProperty("encrypt", "true");
-        boolean verify = Boolean.TRUE.equals(options.get("verifyServerCertificate"));
+        boolean verify = !Boolean.FALSE.equals(options.get("verifyServerCertificate"));
         if (!verify) {
             props.setProperty("trustServerCertificate", "true");
             return;
@@ -123,7 +126,8 @@ public class SQLServerConnectionManager extends BaseConnectionManager {
         props.setProperty("trustServerCertificate", "false");
         String caCert = (String) options.get("caCert");
         if (StringUtils.isNotBlank(caCert)) {
-            var jks = new JKSGenerator(caCert);
+            var jks = newJksGenerator();
+            jks.setCaCert(caCert);
             props.setProperty("trustStore", jks.generateCaJKS().toString());
             props.setProperty("trustStorePassword", JKSGenerator.JSK_PASS);
         }
@@ -144,10 +148,7 @@ public class SQLServerConnectionManager extends BaseConnectionManager {
         }
         String token = SqlServerAccessTokenSupport.resolveAccessToken(this.getConnectInfo());
         if (StringUtils.isBlank(token)) {
-            log.warn("[SqlServerEntra] AccessToken mode requested but token is blank; "
-                    + "falling back to legacy user/password auth");
-            super.applyAuthProps(props);
-            return;
+            throw new IllegalArgumentException("SQL Server Entra authentication requires a non-empty token");
         }
         // mssql-jdbc rejects (user, accessToken) and (password, accessToken)
         // combinations. Strip both before injecting the bearer token.
@@ -171,10 +172,7 @@ public class SQLServerConnectionManager extends BaseConnectionManager {
         }
         String token = SqlServerAccessTokenSupport.resolveAccessToken(this.getConnectInfo());
         if (StringUtils.isBlank(token)) {
-            log.warn("[SqlServerEntra] AccessToken mode requested for pool but token is blank; "
-                    + "falling back to legacy user/password auth");
-            super.applyAuthOnDataSource(ds, properties);
-            return;
+            throw new IllegalArgumentException("SQL Server Entra authentication requires a non-empty token");
         }
         // Do NOT call ds.setUsername / ds.setPassword: mssql-jdbc treats
         // any non-empty user as SQL Auth and rejects the AccessToken.

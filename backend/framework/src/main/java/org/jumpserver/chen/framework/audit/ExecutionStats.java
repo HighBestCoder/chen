@@ -36,7 +36,7 @@ public class ExecutionStats {
     /** Operation kind derived from the command (SELECT / INSERT / UPDATE / DELETE / DDL / OTHER). */
     private String opType;
 
-    /** Original command text. Do not populate while stats are sent through output envelopes. */
+    /** Original command text, retained in the stats envelope independently of legacy input truncation. */
     private String rawCommand;
 
     /** Rows affected by DML/DDL statements. {@code null} for read-only queries. */

@@ -41,7 +41,9 @@ public class DataViewConsole extends AbstractConsole {
         this.table = StringUtils.isEmpty(TreeUtils.getValue(connect.getNodeKey(), "table")) ?
                 TreeUtils.getValue(connect.getNodeKey(), "view") : TreeUtils.getValue(connect.getNodeKey(), "table");
 
-        var title = "";
+        var title = String.format("DataView: %s%s.%s",
+                StringUtils.isEmpty(TreeUtils.getValue(this.getNodeKey(), "database")) ? ""
+                        : TreeUtils.getValue(this.getNodeKey(), "database") + ".", this.schema, this.table);
         try {
             title = this.generateConsoleName();
         } catch (RuntimeException e) {
@@ -57,8 +59,9 @@ public class DataViewConsole extends AbstractConsole {
 
 
     private String generateConsoleName() {
-        var name = String.format("DataView: %s.%s", this.schema, this.table);
-        if (SessionManager.getCurrentSession().getConsoles().get(name) != null) {
+        String database = TreeUtils.getValue(this.getNodeKey(), "database");
+        var name = String.format("DataView: %s%s.%s", StringUtils.isEmpty(database) ? "" : database + ".", this.schema, this.table);
+        if (SessionManager.getCurrentSession().getConsoles().values().stream().anyMatch(console -> name.equals(console.getTitle()))) {
             throw new RuntimeException("console already exists");
         }
 
@@ -88,7 +91,7 @@ public class DataViewConsole extends AbstractConsole {
 
             this.tableDataView.loadData();
         } catch (SQLException e) {
-            this.getMessager().send(Message.error(MessageUtils.get("msg.error.fetch_error"), e.getMessage()));
+            this.getMessager().send(Message.error(MessageUtils.get("msg.error.fetch_error"), e));
         } finally {
             this.tableDataView.getStateManager().getState().setLoading(false);
             this.tableDataView.getStateManager().commit();
@@ -104,20 +107,11 @@ public class DataViewConsole extends AbstractConsole {
         this.getPacketIO().sendPacket("new_data_view", Map.of("title", viewTitle));
         var dataView = new DataView(viewTitle, this.getPacketIO(), this.getConsoleLogger());
 
-        // task-02 (R04 §6.4): object-browse / table-preview path defaults
-        // to QueryPolicy.defaultPreviewLimit (built-in 100), separately
-        // from the SQL console's own default (50). The hard cap from
-        // QueryPolicy.maxRows still applies in SQLExecutePlan.
-        try {
-            int previewLimit = "mongodb".equals(this.getDatasource().getName())
-                    ? 50
-                    : QueryPolicyHolder.current().getDefaultPreviewLimit();
-            if (previewLimit > 0) {
-                dataView.getStateManager().getState().setLimit(previewLimit);
-            }
-        } catch (Throwable t) {
-            // never let the policy lookup break the data-view creation.
-        }
+        // Collection previews default to 50; relational previews default to 100.
+        // The advertised size and pagination stride must match the execution cap.
+        int previewLimit = "mongodb".equals(this.getDatasource().getName())
+                ? 50 : QueryPolicyHolder.current().getDefaultPreviewLimit();
+        dataView.getState().setLimit(Math.min(previewLimit, dataView.getState().getMaxDisplayLimit()));
 
         var session = SessionManager.getCurrentSession();
         dataView.setLoadDataInterface((sqlQueryParams, sink) -> {
@@ -125,28 +119,33 @@ public class DataViewConsole extends AbstractConsole {
                     .getConnectionManager()
                     .getSqlActuator()
                     .createPlan(schemaName, tableName, null);
-            var sql = plan.getTargetSQL();
-            var aclResult = session.checkACL(sql);
-            if (aclResult != null && (aclResult.getRiskLevel() == Common.RiskLevel.Reject || aclResult.getRiskLevel() == Common.RiskLevel.ReviewReject)) {
-                this.getConsoleLogger().error("%s", MessageUtils.get("msg.error.acl_reject"));
-                CommandRecord commandRecord = new CommandRecord(sql);
-                commandRecord.applyACL(aclResult);
-                session.recordCommand(commandRecord);
+            try {
+                var sql = plan.getTargetSQL();
+                var aclResult = session.checkACL(sql);
+                if (aclResult != null && !aclResult.allows(sql)) {
+                    this.getConsoleLogger().error("%s", aclResult.denialMessage());
+                    CommandRecord commandRecord = new CommandRecord(sql);
+                    commandRecord.applyACL(aclResult);
+                    commandRecord.setError(aclResult.denialMessage());
+                    commandRecord.setExecutionStats(org.jumpserver.chen.framework.audit.SqlExecutionStatsBuilder.fromFailure(
+                            this.getDatasource(), sql, new SQLException(aclResult.denialMessage())));
+                    session.recordCommand(commandRecord);
 
-                this.stateManager.getState().setLoading(false);
-                this.stateManager.commit();
-                throw new SQLException(MessageUtils.get("msg.error.acl_reject"));
-            }
-            plan.setSqlQueryParams(sqlQueryParams);
-            plan.setRowConsumer(sink);
-            plan.generateTargetSQL();
+                    this.stateManager.getState().setLoading(false);
+                    this.stateManager.commit();
+                    throw new SQLException(aclResult.denialMessage());
+                }
+                plan.setSqlQueryParams(sqlQueryParams);
+                plan.setRowConsumer(sink);
+                plan.generateTargetSQL();
 
-            plan.setAclResult(aclResult);
-            this.getConsoleLogger().info("execute sql: %s", plan.getTargetSQL());
-            var result = plan.executeWithAudit();
+                plan.setAclResult(aclResult);
+                this.getConsoleLogger().info("execute sql: %s", plan.getTargetSQL());
+                var result = plan.executeWithAudit();
 
-            this.getConsoleLogger().success(result);
-            return result;
+                this.getConsoleLogger().success(result);
+                return result;
+            } finally { plan.close(); }
         });
 
         this.tableDataView = dataView;
@@ -163,7 +162,7 @@ public class DataViewConsole extends AbstractConsole {
             this.getPacketIO().sendPacket("update_data_view", new UpdateDataView(this.tableDataView.getTitle(), this.tableDataView.getData()));
             this.tableDataView.getStateManager().commit();
         } catch (SQLException e) {
-            this.getMessager().send(Message.error(MessageUtils.get("msg.error.fetch_error"), e.getMessage()));
+            this.getMessager().send(Message.error(MessageUtils.get("msg.error.fetch_error"), e));
         } finally {
             this.tableDataView.getStateManager().getState().setLoading(false);
             this.tableDataView.getStateManager().commit();

@@ -10,9 +10,11 @@ import org.jumpserver.chen.framework.datasource.sql.SQLQueryParams;
 public class DataViewState extends State {
     private int page;
     private int limit;
+    private int maxDisplayLimit = 50_000;
     private int total;
     private boolean pinned;
     private boolean paged;
+    private boolean manualLimitDetected;
     /** Bytes of the returned data; -1 when the engine could not measure it. */
     private long sizeBytes = -1;
 

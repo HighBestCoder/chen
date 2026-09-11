@@ -54,6 +54,7 @@ export default {
   },
   data() {
     return {
+      busHandlers: {},
       dialogMeta: {},
       dialogVisible: false,
       subjects: {
@@ -77,7 +78,14 @@ export default {
   mounted() {
     this.watchEventBus()
   },
+  beforeDestroy() {
+    Object.entries(this.busHandlers).forEach(([event, handler]) => this.$bus.$off(event, handler))
+  },
   methods: {
+    listen(event, handler) {
+      this.busHandlers[event] = handler
+      this.$bus.$on(event, handler)
+    },
     onChangeTab(title) {
       this.tabs.forEach(tab => {
         if (tab.title === title) {
@@ -94,11 +102,11 @@ export default {
       }
     },
     watchEventBus() {
-      this.$bus.$on('new_form', (data) => {
+      this.listen('new_form', (data) => {
         this.formOptions = data
         this.formTemplateVisible = true
       })
-      this.$bus.$on('new_query', (data) => {
+      this.listen('new_query', (data) => {
         this.tabNum++
         this.tabs.push({
           title: 'Query',
@@ -111,7 +119,7 @@ export default {
         this.activeTab = '' + this.tabNum
       })
 
-      this.$bus.$on('view_data', (data) => {
+      this.listen('view_data', (data) => {
         this.tabNum++
         this.tabs.push({
           title: 'DataView',
@@ -122,7 +130,7 @@ export default {
         })
         this.activeTab = '' + this.tabNum
       })
-      this.$bus.$on('new_dialog', (data) => {
+      this.listen('new_dialog', (data) => {
         this.dialogMeta = data
         this.dialogVisible = true
       })

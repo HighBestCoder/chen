@@ -56,9 +56,9 @@ export default {
   methods: {
     loadSnippets() {
       const sqlType = store.getters.profile?.dbType
-      getSnippets().then(data => {
+      return getSnippets().then(data => {
         this.snippets = data.filter(item => snippetMatchesDb(item, sqlType))
-      })
+      }).catch(() => { this.snippets = [] })
     },
     onSelectSnippet(item) {
       this.$emit('select', item.args)

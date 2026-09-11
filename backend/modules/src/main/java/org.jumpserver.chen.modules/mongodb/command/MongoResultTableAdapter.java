@@ -15,6 +15,10 @@ import java.util.List;
 import java.util.Map;
 
 public class MongoResultTableAdapter {
+    private final java.util.function.Consumer<List<Document>> observer;
+    public MongoResultTableAdapter() {this(null);}
+    public MongoResultTableAdapter(java.util.function.Consumer<List<Document>> observer) {this.observer=observer;}
+
 
     private static final JsonWriterSettings RELAXED =
             JsonWriterSettings.builder().outputMode(JsonMode.RELAXED).build();
@@ -35,6 +39,7 @@ public class MongoResultTableAdapter {
 
     public SQLQueryResult toResult(String sql, String collection, List<Document> documents, Document projection,
                                    long startMillis, long queryDoneMillis, long total, boolean paged) {
+        if(observer!=null)observer.accept(documents);
         SQLQueryResult result = new SQLQueryResult(sql);
 
         List<String> keys = MongoFieldPathExtractor.fieldPaths(projection, documents);
@@ -53,7 +58,7 @@ public class MongoResultTableAdapter {
         for (Document doc : documents) {
             List<Object> row = new ArrayList<>(keys.size());
             for (String key : keys) {
-                row.add(renderValue(MongoFieldPathExtractor.valueAtPath(doc, key)));
+                row.add(renderValue(doc.get(key)));
             }
             rows.add(row);
         }
@@ -63,14 +68,25 @@ public class MongoResultTableAdapter {
         result.setTotal((int) Math.min(total, Integer.MAX_VALUE));
         result.setPaged(paged);
 
-        // The relational path accumulates this in its streaming fetch loop.
-        // Mongo materializes the documents first, so it is measured here —
-        // in one place, so the console display and the audit envelope can
-        // never disagree about the same query's size.
-        SizeCalculator.Result size = SizeCalculator.compute(fields, rows);
-        result.setStreamedSizeBytes(size.sizeBytes);
-        result.setSizeStatsStatus(size.status);
-        result.setSizeStatsUnavailableReason(size.unavailableReason);
+        // Statistics follow actual BSON leaves, not JSON punctuation or UI
+        // flattening. Accumulate only totals; do not retain a second row set.
+        try {
+            Map<String, Long> sizes = MongoFieldPathExtractor.columnSizes(projection, documents);
+            result.setStreamedImpactColumns(new ArrayList<>(sizes.keySet()));
+            Map<String, Long> byColumn = new java.util.LinkedHashMap<>();
+            String table = collection == null || collection.isBlank() ? "unknown" : collection.trim();
+            sizes.forEach((path, bytes) -> byColumn.merge(table + "." + path, bytes, Long::sum));
+            result.setStreamedSizeByColumn(byColumn);
+            result.setStreamedSizeBytes(sizes.values().stream().mapToLong(Long::longValue).sum());
+            result.setSizeStatsStatus(SizeCalculator.STATUS_OK);
+            result.setSizeByColumnSourceStatus(SizeCalculator.STATUS_OK);
+        } catch (RuntimeException e) {
+            result.setStreamedSizeBytes(-1);
+            result.setSizeStatsStatus(SizeCalculator.STATUS_UNAVAILABLE);
+            result.setSizeStatsUnavailableReason(e.getClass().getSimpleName());
+            result.setSizeByColumnSourceStatus(SizeCalculator.STATUS_UNAVAILABLE);
+            result.setSizeByColumnSourceUnavailableReason(e.getClass().getSimpleName());
+        }
 
         long fetchDone = System.currentTimeMillis();
         result.setStartTime(new Time(startMillis));
@@ -82,7 +98,7 @@ public class MongoResultTableAdapter {
 
     private String inferType(List<Document> documents, String key) {
         for (Document doc : documents) {
-            Object value = MongoFieldPathExtractor.valueAtPath(doc, key);
+            Object value = doc.get(key);
             if (value != null) {
                 return typeName(value);
             }
@@ -93,9 +109,6 @@ public class MongoResultTableAdapter {
     private String typeName(Object value) {
         if (value instanceof ObjectId) {
             return "objectId";
-        }
-        if (value instanceof MongoFieldPathExtractor.FlattenedValues) {
-            return "array";
         }
         if (value instanceof Document) {
             return "object";
@@ -118,28 +131,28 @@ public class MongoResultTableAdapter {
         return value.getClass().getSimpleName().toLowerCase();
     }
 
-    private Object renderValue(Object value) {
+    static Object renderValue(Object value) {
         if (value == null) {
             return null;
         }
         if (value instanceof ObjectId oid) {
             return oid.toHexString();
         }
-        if (value instanceof MongoFieldPathExtractor.FlattenedValues flattened) {
-            return flattened.toString();
+        if (value instanceof Long number) {
+            // JavaScript numbers cannot represent every BSON int64 exactly.
+            return number.toString();
         }
+        if (value instanceof String || value instanceof Integer
+                || value instanceof Double number && Double.isFinite(number)
+                || value instanceof Boolean) {
+            return value;
+        }
+        // Use the BSON codec for nested arrays, nulls, dates, binary and decimal
+        // values. Strip only our wrapper so arrays remain JSON arrays in CSV/UI.
         if (value instanceof Document doc) {
             return doc.toJson(RELAXED);
         }
-        if (value instanceof Collection<?> collection) {
-            return new Document("_", new ArrayList<>(collection)).toJson(RELAXED);
-        }
-        if (value instanceof Map<?, ?> map) {
-            return new Document().append("_", map).toJson(RELAXED);
-        }
-        if (value instanceof String || value instanceof Number || value instanceof Boolean) {
-            return value;
-        }
-        return value.toString();
+        String json = new Document("value", value).toJson(RELAXED);
+        return json.substring(json.indexOf(':') + 1, json.length() - 1).trim();
     }
 }

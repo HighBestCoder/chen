@@ -15,7 +15,11 @@ public class DBConsoleWebsocketHandler extends TextWebSocketHandler {
 
     @Override
     public void handleMessage(WebSocketSession session, WebSocketMessage<?> message) throws Exception {
-        log.info(message.toString());
+        var identity = org.jumpserver.chen.framework.session.SessionManager.getSession(
+                (String) session.getAttributes().get("token"));
+        if (identity == null || !identity.isActive()) {
+            session.close(org.springframework.web.socket.CloseStatus.POLICY_VIOLATION);
+        }
     }
 
     @Override

@@ -8,8 +8,8 @@ import java.sql.SQLException;
  * message "无该操作权限" (GUI-SQL-006) instead of a raw driver string.
  *
  * <p>The Entra access token is opaque to chen and carries no in-database
- * privilege information, so a true pre-execution check is infeasible. Instead
- * the database enforces permissions and rejects the write; this classifier
+ * privilege information, so token claims cannot replace database authorization.
+ * The authenticated database checks permissions before applying the operation; this classifier
  * recognizes that rejection by the engine-specific SQLState / vendor error
  * code. Authentication failures (a different error class) are intentionally
  * NOT matched.</p>
@@ -23,12 +23,20 @@ public final class SqlPermissionErrorClassifier {
      * @return true if the exception (or any cause in its chain) is a relational
      * write-permission denial for PostgreSQL, MySQL/MariaDB or SQL Server.
      */
-    public static boolean isPermissionDenied(SQLException e) {
+    public static boolean isPermissionDenied(Throwable e) {
         if (e == null) {
             return false;
         }
-        for (Throwable t = e; t != null; t = t.getCause()) {
+        var seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Throwable, Boolean>());
+        var pending = new java.util.ArrayDeque<Throwable>();
+        pending.add(e);
+        while (!pending.isEmpty()) {
+            Throwable t = pending.removeFirst();
+            if (!seen.add(t)) continue;
+            if (t instanceof OperationPermissionDeniedException) return true;
+            if (t.getCause() != null) pending.add(t.getCause());
             if (t instanceof SQLException se) {
+                if (se.getNextException() != null) pending.add(se.getNextException());
                 // PostgreSQL: SQLState 42501 = insufficient_privilege.
                 if ("42501".equals(se.getSQLState())) {
                     return true;

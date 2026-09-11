@@ -23,6 +23,14 @@ public class Message extends SQLResult {
         return create(MESSAGE_ERROR, title, message, args);
     }
 
+    static public Message error(String title, Throwable error) {
+        if (org.jumpserver.chen.framework.datasource.error.SqlPermissionErrorClassifier.isPermissionDenied(error)) {
+            String text = org.jumpserver.chen.framework.i18n.MessageUtils.get("msg.error.no_operation_permission");
+            return create(MESSAGE_ERROR, text, text);
+        }
+        return create(MESSAGE_ERROR, title, error.getMessage());
+    }
+
     static public Message info(String title, String message, Object... args) {
         return create(MESSAGE_INFO, title, message, args);
     }
@@ -31,7 +39,7 @@ public class Message extends SQLResult {
         Message msg = new Message();
         msg.setType(type);
         msg.setTitle(title);
-        msg.setMessage(String.format(message, args));
+        msg.setMessage((args.length == 0 ? message : String.format(message, args)));
         return msg;
     }
 }

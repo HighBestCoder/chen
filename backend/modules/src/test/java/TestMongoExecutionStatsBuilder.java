@@ -101,7 +101,9 @@ public class TestMongoExecutionStatsBuilder {
         Map<String, Long> expectedSize = Map.of(
                 "users.orders.amount", 6L,
                 "users.orders.city", 12L,
-                "users.tags", 22L);
+                // Only the actual values "vip" + "risk", not the old
+                // synthetic {"_": [...]} display wrapper or JSON separators.
+                "users.tags", 7L);
         report("array size_by_column stable", expectedSize.equals(byColumn), expectedSize, byColumn);
     }
 

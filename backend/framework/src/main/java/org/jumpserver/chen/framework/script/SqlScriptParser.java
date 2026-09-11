@@ -16,25 +16,11 @@ import java.util.Objects;
  * statements honouring the dialect's quoting, comment, delimiter and
  * stored-procedure rules.
  *
- * <p>We use druid's {@link SQLUtils#parseStatements(String, DbType)}
- * so quoted strings, dollar-quoted strings (PostgreSQL), bracketed
- * identifiers (SQL Server), block comments, line comments and
- * {@code BEGIN ... END} stored-procedure bodies are handled
- * correctly. A naive {@code split(";")} would split inside a string
- * literal or a procedure body.</p>
- *
- * <p>When druid's parser fails (unsupported dialect, malformed input,
- * vendor-specific extension that druid does not recognise yet), we
- * return a {@link Result} carrying the error and an empty statement
- * list. The caller must then surface the message to the user rather
- * than try to execute the script blindly.</p>
- *
- * <p><b>Known druid limitation:</b> PostgreSQL {@code CREATE FUNCTION ...
- * LANGUAGE plpgsql} bodies are not yet accepted by druid's PG parser.
- * Customer scripts that mix DDL function bodies with regular DML will
- * surface as a parse error here; slice B is expected to add a
- * dialect-aware fallback splitter that respects {@code $tag$ ... $tag$}
- * boundaries when druid bails out.</p>
+ * <p>SqlText uses Druid to validate statement boundaries while retaining the
+ * original execution text and protecting quoted tokens during analysis.
+ * Unsupported grammar is reported with an empty statement list. Separate
+ * top-level statements with semicolons; client directives such as GO and
+ * DELIMITER are not SQL statements and are not executed.</p>
  */
 @Slf4j
 public final class SqlScriptParser {
@@ -48,14 +34,13 @@ public final class SqlScriptParser {
         }
         DbType effective = dbType == null ? DbType.other : dbType;
         try {
-            List<SQLStatement> stmts = SQLUtils.parseStatements(script, effective);
+            List<String> stmts = org.jumpserver.chen.framework.utils.SqlText.statements(script, effective);
             if (stmts == null || stmts.isEmpty()) {
                 return Result.empty();
             }
             List<Statement> out = new ArrayList<>(stmts.size());
             int index = 0;
-            for (SQLStatement stmt : stmts) {
-                String sql = SQLUtils.toSQLString(stmt, effective);
+            for (String sql : stmts) {
                 if (sql == null) {
                     continue;
                 }
@@ -84,7 +69,7 @@ public final class SqlScriptParser {
                 i++;
                 continue;
             }
-            if (c == '-' && i + 1 < n && sql.charAt(i + 1) == '-') {
+            if (c == '#' || (c == '-' && i + 1 < n && sql.charAt(i + 1) == '-')) {
                 int eol = sql.indexOf('\n', i + 2);
                 i = eol < 0 ? n : eol + 1;
                 continue;
