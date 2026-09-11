@@ -33,30 +33,42 @@ public class OracleActuator extends BaseSQLActuator {
 
     @Override
     public void changeSchema(String schema) throws SQLException {
-        this.execute(SQL.of("ALTER SESSION SET CURRENT_SCHEMA = ?", schema));
+        this.execute(SQL.of("ALTER SESSION SET CURRENT_SCHEMA = " + quoteIdentifier(schema)));
     }
 
     @Override
     public SQLExecutePlan createPlan(String schema, String table, SQLQueryParams sqlQueryParams) throws SQLException {
-        var sql = SQL.of("select * from ?.\"?\"", schema, table);
-        return this.createPlan(sql, sqlQueryParams);
+        return this.createPreviewPlan(quoteIdentifier(schema) + "." + quoteIdentifier(table), sqlQueryParams);
     }
 
 
-    private void beforeCreatePlan(SQL sql){
-        if (sql.getSql().endsWith(";")) {
-            sql.setSql(sql.getSql().substring(0, sql.getSql().length() - 1));
-        }
+    private SQL beforeCreatePlan(SQL sql) {
+        String text = sql.getSql().stripTrailing();
+        if (!text.endsWith(";")) return sql;
+        var statements = org.jumpserver.chen.framework.utils.SqlText.analyze(text, com.alibaba.druid.DbType.oracle);
+        if (statements.size() != 1) return sql;
+        var statement = statements.get(0);
+        // JDBC ordinary statements omit the client delimiter; PL/SQL owns its END;.
+        if (statement instanceof com.alibaba.druid.sql.ast.statement.SQLBlockStatement
+                || statement instanceof com.alibaba.druid.sql.ast.statement.SQLCreateProcedureStatement
+                || statement instanceof com.alibaba.druid.sql.ast.statement.SQLCreateFunctionStatement
+                || statement instanceof com.alibaba.druid.sql.ast.statement.SQLCreateTriggerStatement
+                || statement instanceof com.alibaba.druid.sql.dialect.oracle.ast.stmt.OracleCreatePackageStatement) return sql;
+        return SQL.bound(text.substring(0, text.length() - 1), sql.getParameters().toArray());
     }
+
     @Override
     public SQLExecutePlan createPlan(SQL sql, SQLQueryParams params) throws SQLException {
-        this.beforeCreatePlan(sql);
-        return super.createPlan(sql, params);
+        return super.createPlan(this.beforeCreatePlan(sql), params);
     }
 
     @Override
     public SQLExecutePlan createPlan(SQL sql) throws SQLException {
-        this.beforeCreatePlan(sql);
-        return super.createPlan(sql);
+        return super.createPlan(this.beforeCreatePlan(sql));
+    }
+
+    private static String quoteIdentifier(String value) {
+        if (value == null) throw new IllegalArgumentException("Missing database identifier");
+        return "\"" + value.replace("\"", "\"\"") + "\"";
     }
 }

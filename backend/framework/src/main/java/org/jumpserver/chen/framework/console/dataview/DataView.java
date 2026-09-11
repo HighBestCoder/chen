@@ -28,6 +28,9 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
+import org.springframework.beans.BeanUtils;
 
 @EqualsAndHashCode(callSuper = true)
 @Data
@@ -47,6 +50,9 @@ public class DataView extends SQLResult {
     public DataView(String title, PacketIO packetIO, Logger logger) {
         this.title = title;
         this.state = new DataViewState(title);
+        var policy = org.jumpserver.chen.framework.policy.QueryPolicyHolder.current();
+        this.state.setMaxDisplayLimit(Math.min(50_000, policy.getMaxRows()));
+        this.state.setLimit(Math.min(50, this.state.getMaxDisplayLimit()));
         this.stateManager = new StateManager<>(this.state, packetIO);
         this.consoleLogger = logger;
     }
@@ -82,9 +88,16 @@ public class DataView extends SQLResult {
     }
 
     public void loadData() throws SQLException {
+        if (this.state.getLimit() <= 0 || this.state.getLimit() > effectiveDisplayLimit() || this.state.getPage() < 1) {
+            throw new SQLException("Invalid display page or limit");
+        }
         SQLQueryParams queryParams = new SQLQueryParams();
         queryParams.setLimit(this.state.getLimit());
-        queryParams.setOffset((this.state.getPage() - 1) * this.state.getLimit());
+        try {
+            queryParams.setOffset(Math.multiplyExact(this.state.getPage() - 1, this.state.getLimit()));
+        } catch (ArithmeticException e) {
+            throw new SQLException("Page offset exceeds supported range", e);
+        }
 
         var result = this.loadDataInterface
                 .loadData(queryParams, null);
@@ -99,29 +112,40 @@ public class DataView extends SQLResult {
             return;
         }
 
+        this.hasTable = true;
+        this.data.setRevision(this.data.getRevision() + 1);
         this.state.setPaged(result.isPaged());
+        this.state.setManualLimitDetected(result.isManualLimitDetected());
 
         this.data.getFields().clear();
         this.data.getData().clear();
 
         this.getStateManager().getState().setTotal(result.getTotal());
-        this.getStateManager().getState().setSizeBytes(result.getStreamedSizeBytes());
+        this.getStateManager().getState().setSizeBytes(
+                "unavailable".equals(result.getSizeStatsStatus()) ? -1 : result.getStreamedSizeBytes());
 
 
-        this.data.setFields(result.getFields());
-
-        Map<String, Integer> fieldNumMap = new HashMap<>();
-
-        this.data.getFields().forEach(field -> {
-            if (fieldNumMap.containsKey(field.getName())) {
-                var fieldName = field.getName();
-                var num = fieldNumMap.get(field.getName());
-                field.setName(field.getName() + "(" + num + ")");
-                fieldNumMap.put(field.getName(), fieldNumMap.get(fieldName) + 1);
-            } else {
-                fieldNumMap.put(field.getName(), 1);
+        // Display keys must be unique, including aliases that already contain
+        // a suffix. Keep JDBC/audit metadata intact when generating UI names.
+        Set<String> reserved = new HashSet<>();
+        result.getFields().forEach(field -> reserved.add(field.getName()));
+        Set<String> used = new HashSet<>();
+        List<Field> displayFields = new ArrayList<>();
+        for (Field original : result.getFields()) {
+            Field field = new Field();
+            BeanUtils.copyProperties(original, field);
+            String name = original.getName();
+            if (used.contains(name)) {
+                int suffix = 1;
+                do {
+                    name = original.getName() + "(" + suffix++ + ")";
+                } while (reserved.contains(name) || used.contains(name));
             }
-        });
+            used.add(name);
+            field.setName(name);
+            displayFields.add(field);
+        }
+        this.data.setFields(displayFields);
 
 
         for (List<Object> row : result.getData()) {
@@ -164,27 +188,21 @@ public class DataView extends SQLResult {
         var session = SessionManager.getCurrentSession();
         ExportRequest exportRequest = ExportRequest.from(request);
         String scope = exportRequest.scope();
-
-
+        CommandRecord command = new CommandRecord(String.format("Export data: %s", this.title));
+        if (!session.canDownload()) {
+            command.setError("Export denied: no download permission for this asset");
+            session.recordCommand(command);
+            this.consoleLogger.warn("Export denied: no download permission for this asset");
+            return;
+        }
+        if (!List.of("current", "selected", "all").contains(scope)) {
+            throw new SQLException("Unknown export scope: " + scope);
+        }
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS");
         String timestamp = LocalDateTime.now().format(formatter);
         var f = session.createFile(String.format("data_%s_%d.csv", timestamp, System.nanoTime()));
 
-        CommandRecord command = new CommandRecord(String.format("Export data: %s", this.title));
-
-        BufferedWriter writer = null;
-        try {
-            if (!SessionManager.getCurrentSession().canDownload()) {
-                // 这里曾是一个纯静默的 return：不写文件、不记日志、控制台也没有
-                // 任何提示，排查时完全看不出「导出为什么没反应」。授权里缺
-                // download 动作就会走到这条分支。
-                log.warn("Export denied: user={} from={} view={} scope={} — asset permission has no download action",
-                        session.getUsername(), session.getRemoteAddr(), this.title, scope);
-                this.consoleLogger.warn("Export denied: no download permission for this asset");
-                session.getController().sendFile(f.getName());
-                return;
-            }
-            writer = Files.newBufferedWriter(f.toPath());
+        try (BufferedWriter writer = Files.newBufferedWriter(f.toPath())) {
             // UTF-8 BOM so Excel opens non-ASCII (e.g. CJK) CSV without mojibake.
             writer.write('\uFEFF');
 
@@ -194,7 +212,7 @@ public class DataView extends SQLResult {
             }
 
             if (scope.equals("selected")) {
-                List<Map<String, Object>> selectedRows = exportRequest.rows();
+                List<Map<String, Object>> selectedRows = selectedRows(request, exportRequest.rows());
                 writeMappedRows(writer, this.data.getFields(), selectedRows);
                 command.setOutput(String.format("%d rows exported", selectedRows.size()));
             }
@@ -213,11 +231,7 @@ public class DataView extends SQLResult {
                     public void begin(List<Field> fs) throws SQLException {
                         this.fields = fs;
                         try {
-                            for (Field field : fs) {
-                                w.write(field.getName());
-                                w.write(",");
-                            }
-                            w.newLine();
+                            writeMappedRows(w, fs, List.of());
                         } catch (IOException e) {
                             throw new SQLException(e);
                         }
@@ -232,29 +246,65 @@ public class DataView extends SQLResult {
                         }
                         written[0]++;
                     }
+
+                    @Override
+                    public void finish() throws SQLException {
+                        try { w.flush(); } catch (IOException e) { throw new SQLException(e); }
+                    }
                 });
 
                 command.setOutput(String.format("%d rows exported", written[0]));
             }
             writer.flush();
 
-            log.info("Export finished: user={} view={} scope={} file={} — {}",
-                    session.getUsername(), this.title, scope, f.getName(), command.getOutput());
-            this.consoleLogger.success(command.getOutput());
+        } catch (IOException | SQLException | RuntimeException e) {
+            command.setError(e.getMessage());
             session.recordCommand(command);
-
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        } finally {
-            if (writer != null) {
-                try {
-                    writer.close();
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
+            try {
+                Files.deleteIfExists(f.toPath());
+            } catch (IOException cleanup) {
+                e.addSuppressed(cleanup);
             }
+            if (e instanceof SQLException sqlException) {
+                throw sqlException;
+            }
+            throw new SQLException("Export failed: " + e.getMessage(), e);
         }
+        log.info("Export finished: user={} view={} scope={} file={} — {}",
+                session.getUsername(), this.title, scope, f.getName(), command.getOutput());
+        this.consoleLogger.success(command.getOutput());
+        session.recordCommand(command);
         session.getController().sendFile(f.getName());
+    }
+
+    private List<Map<String, Object>> selectedRows(Object request, List<Map<String, Object>> legacyRows)
+            throws SQLException {
+        if (request instanceof Map<?, ?> map && map.containsKey("rowIndices")) {
+            if (!(map.get("revision") instanceof Number revision) || revision.longValue() != this.data.getRevision()) {
+                throw new SQLException("Result changed; select the rows again before exporting");
+            }
+            if (!(map.get("rowIndices") instanceof List<?> indices)) throw new SQLException("Invalid row selection");
+            List<Map<String, Object>> selected = new ArrayList<>();
+            Set<Integer> seen = new HashSet<>();
+            for (Object value : indices) {
+                if (!(value instanceof Number number) || number.doubleValue() != number.intValue()
+                        || number.intValue() < 0 || number.intValue() >= this.data.getData().size()) {
+                    throw new SQLException("Selected row is outside the current result");
+                }
+                int index = number.intValue();
+                if (seen.add(index)) selected.add(this.data.getData().get(index));
+            }
+            return selected;
+        }
+        // Compatibility for old clients: never export client-invented values.
+        List<Map<String, Object>> available = new ArrayList<>(this.data.getData());
+        List<Map<String, Object>> selected = new ArrayList<>();
+        for (Map<String, Object> row : legacyRows) {
+            int index = available.indexOf(row);
+            if (index < 0) throw new SQLException("Selected data no longer matches the current result; select it again");
+            selected.add(available.remove(index));
+        }
+        return selected;
     }
 
     private static void writeMappedRows(BufferedWriter writer, List<Field> fields, List<Map<String, Object>> rows)
@@ -326,29 +376,32 @@ public class DataView extends SQLResult {
         try {
             this.getStateManager().getState().setPage(1);
             this.loadData();
-        } catch (SQLException e) {
+        } catch (SQLException | RuntimeException e) {
             this.getStateManager().getState().setPage(p);
             throw e;
         }
     }
 
     public void prevPage() throws SQLException {
+        if (!this.state.isPaged() || this.state.getPage() <= 1) return;
         var p = this.getStateManager().getState().getPage();
         try {
             this.getStateManager().getState().setPage(this.getStateManager().getState().getPage() - 1);
             this.loadData();
-        } catch (SQLException e) {
+        } catch (SQLException | RuntimeException e) {
             this.getStateManager().getState().setPage(p);
             throw e;
         }
     }
 
     public void nextPage() throws SQLException {
+        if (!this.state.isPaged()) return;
+        if (this.state.getTotal() >= 0 && (long) this.state.getPage() * this.state.getLimit() >= this.state.getTotal()) return;
         var p = this.getStateManager().getState().getPage();
         try {
             this.getStateManager().getState().setPage(this.getStateManager().getState().getPage() + 1);
             this.loadData();
-        } catch (SQLException e) {
+        } catch (SQLException | RuntimeException e) {
             this.getStateManager().getState().setPage(p);
             throw e;
         }
@@ -364,20 +417,26 @@ public class DataView extends SQLResult {
                 this.getStateManager().getState().setPage(page);
             }
             this.loadData();
-        } catch (SQLException e) {
+        } catch (SQLException | RuntimeException e) {
             this.getStateManager().getState().setPage(p);
             throw e;
         }
     }
 
+    private int effectiveDisplayLimit() {
+        return Math.min(this.state.getMaxDisplayLimit(),
+                org.jumpserver.chen.framework.policy.QueryPolicyHolder.current().getMaxRows());
+    }
+
     public void changeLimit(int limit) throws SQLException {
+        if (limit <= 0 || limit > effectiveDisplayLimit()) throw new SQLException("Display limit exceeds the configured maximum");
         var oldLimit = this.getStateManager().getState().getLimit();
         var oldPage = this.getStateManager().getState().getPage();
         try {
             this.getStateManager().getState().setPage(1);
             this.getStateManager().getState().setLimit(limit);
             this.loadData();
-        } catch (SQLException e) {
+        } catch (SQLException | RuntimeException e) {
             this.getStateManager().getState().setLimit(oldLimit);
             this.getStateManager().getState().setPage(oldPage);
             throw e;

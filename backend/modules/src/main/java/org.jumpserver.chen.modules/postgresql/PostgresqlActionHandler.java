@@ -50,7 +50,7 @@ public class PostgresqlActionHandler extends BaseActionHandler {
         );
     }
 
-    private static final String SQL_SELECT_DATABASE_DETAIL = "SELECT datname,pg_database_size(datname) as size,pg_database_size(datname) - pg_database_size(datname) as size_free,pg_database_size(datname) / pg_database_size(datname) as size_percent FROM pg_database WHERE datname = '?'";
+    private static final String SQL_SELECT_DATABASE_DETAIL = "SELECT datname,pg_database_size(datname) as size FROM pg_database WHERE datname = '?'";
 
     public EventEmitter onDatabaseProperties(TreeNode node) throws SQLException {
         return this.onShowObjectProperties("database", SQL_SELECT_DATABASE_DETAIL, node);
@@ -60,7 +60,10 @@ public class PostgresqlActionHandler extends BaseActionHandler {
     private static final String SQL_SELECT_TABLE_DETAIL = "SELECT table_name,table_schema,table_type FROM information_schema.tables WHERE  table_name = '?'";
 
     public EventEmitter onTableProperties(TreeNode node) throws SQLException {
-        return this.onShowObjectProperties("table", SQL_SELECT_TABLE_DETAIL, node);
+        return this.onShowObjectProperties("table", org.jumpserver.chen.framework.datasource.sql.SQL.bound(
+                SQL_SELECT_TABLE_DETAIL.replace("'?'", "?") + " AND table_schema = ?",
+                org.jumpserver.chen.framework.utils.TreeUtils.getValue(node.getKey(), "table"),
+                org.jumpserver.chen.framework.utils.TreeUtils.getValue(node.getKey(), "schema")), node);
     }
 
 

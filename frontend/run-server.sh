@@ -1,8 +1,10 @@
-#! /bin/bash
-
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
+yarn install --frozen-lockfile
+yarn build
 cd ..
-
 mvn clean package -DskipTests
-
-java -Dspring.profiles.active=dev -jar backend/web/target/web-0.0.1.jar
-
+jars=(backend/web/target/web-*.jar)
+[[ ${#jars[@]} -eq 1 && -f "${jars[0]}" ]]
+exec java -Dspring.profiles.active=dev -jar "${jars[0]}"

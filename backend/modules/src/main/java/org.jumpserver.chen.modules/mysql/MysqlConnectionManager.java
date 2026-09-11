@@ -23,6 +23,14 @@ public class MysqlConnectionManager extends BaseConnectionManager {
     }
 
     @Override
+    protected void setSSLProps(java.util.Properties properties) {
+        super.setSSLProps(properties);
+        boolean tls=Boolean.TRUE.equals(getConnectInfo().getOptions().get("useSSL"));
+        boolean verify=!Boolean.FALSE.equals(getConnectInfo().getOptions().get("verifyServerCertificate"));
+        properties.setProperty("sslMode", !tls ? "DISABLED" : verify ? "VERIFY_IDENTITY" : "REQUIRED");
+    }
+
+    @Override
     public void ping() throws SQLException {
         var url = this.getConnectInfo().toJDBCUrl(jdbcUrlTemplate);
         this.ping(url);
@@ -49,6 +57,6 @@ public class MysqlConnectionManager extends BaseConnectionManager {
 
     @Override
     public String getJDBCUrl(String database) {
-        return this.jdbcUrl;
+        return getConnectInfo().toJDBCUrl(jdbcUrlTemplate, database);
     }
 }

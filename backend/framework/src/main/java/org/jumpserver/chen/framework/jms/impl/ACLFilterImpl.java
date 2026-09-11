@@ -1,11 +1,12 @@
 package org.jumpserver.chen.framework.jms.impl;
 
 import lombok.extern.slf4j.Slf4j;
-import org.jumpserver.chen.framework.datasource.sql.SQL;
 import org.jumpserver.chen.framework.i18n.MessageUtils;
 import org.jumpserver.chen.framework.jms.ACLFilter;
 import org.jumpserver.chen.framework.jms.acl.ACLResult;
+import org.jumpserver.chen.framework.session.Session;
 import org.jumpserver.chen.framework.session.SessionManager;
+import org.jumpserver.chen.framework.session.impl.JMSSession;
 import org.jumpserver.chen.framework.session.controller.dialog.Button;
 import org.jumpserver.chen.framework.session.controller.dialog.Dialog;
 import org.jumpserver.chen.wisp.Common;
@@ -13,308 +14,213 @@ import org.jumpserver.chen.wisp.ServiceGrpc;
 import org.jumpserver.chen.wisp.ServiceOuterClass;
 
 import java.sql.Connection;
-import java.sql.SQLException;
 import java.util.List;
-import java.util.Timer;
-import java.util.TimerTask;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 @Slf4j
 public class ACLFilterImpl implements ACLFilter {
-
     private final ServiceGrpc.ServiceBlockingStub serviceBlockingStub;
     private final List<Common.CommandACL> commandACLs;
     private final Common.Session session;
+    private final ReentrantLock reviewLock = new ReentrantLock();
+    private final long timeoutMillis;
+    private final long pollMillis;
 
-
-    public ACLFilterImpl(Common.Session session, ServiceGrpc.ServiceBlockingStub serviceBlockingStub, List<Common.CommandACL> commandACLs) {
-        this.serviceBlockingStub = serviceBlockingStub;
-        this.commandACLs = commandACLs;
-        this.session = session;
+    public ACLFilterImpl(Common.Session session, ServiceGrpc.ServiceBlockingStub stub, List<Common.CommandACL> rules) {
+        this(session, stub, rules, 30 * 60 * 1000L, 5000L);
     }
 
-    private static final String REJECT_MESSAGE = "reject by acl rule";
+    ACLFilterImpl(Common.Session session, ServiceGrpc.ServiceBlockingStub stub, List<Common.CommandACL> rules,
+                  long timeoutMillis, long pollMillis) {
+        this.session = session;
+        this.serviceBlockingStub = stub;
+        this.commandACLs = rules;
+        this.timeoutMillis = timeoutMillis;
+        this.pollMillis = pollMillis;
+    }
 
     @Override
     public ACLResult commandACLFilter(String command, Connection connection) {
+        return commandACLFilterBatch(command, List.of(), connection);
+    }
+
+    @Override
+    public ACLResult commandACLFilterBatch(String command, List<String> statements, Connection connection) {
         var result = new ACLResult();
-        var acl = this.matchRule(command, result);
-
-        if (acl == null) {
-            result.setRiskLevel(Common.RiskLevel.Normal);
-            return result;
-        }
-
-        switch (acl.getAction()) {
-            case Accept -> {
-                result.setRiskLevel(Common.RiskLevel.Normal);
-                result.setRiskAction("accept");
-            }
-            case Warning -> {
-                result.setRiskLevel(Common.RiskLevel.Warning);
-                result.setRiskAction("warning");
-            }
-            case Reject -> {
-                result.setRiskLevel(Common.RiskLevel.Reject);
-                result.setRiskAction("reject");
-            }
-            case Review -> {
-                result.setRiskAction("review");
-                log.info("Command review required: session={} aclId={} command={} — showing confirm dialog",
-                        this.session.getId(), acl.getId(), command);
-                var countDownLatch = new CountDownLatch(1);
-                AtomicReference<Exception> exception = new AtomicReference<>(null);
-
-                var dialog = new Dialog(MessageUtils.get("msg.dialog.title.command_review"));
-                dialog.setBody(MessageUtils.get("msg.dialog.message.command_review"));
-
-                dialog.addButton(new Button(MessageUtils.get("btn.label.submit"), "submit", () -> {
-
-                    var token = SessionManager.getContextToken();
-                    new Thread(() -> {
-                        SessionManager.setContext(token);
-                        try {
-                            this.createAndWaitTicket(command, acl, connection, result);
-                        } catch (Exception e) {
-                            exception.set(e);
-                        } finally {
-                            countDownLatch.countDown();
-                        }
-                    }).start();
-                }));
-                dialog.addButton(new Button(MessageUtils.get("btn.label.cancel"), "cancel", () -> {
-                    log.info("Command review cancelled by operator: session={} command={}",
-                            this.session.getId(), command);
-                    exception.set(new RuntimeException(MessageUtils.get("msg.error.user_cancel_command_review")));
-                    countDownLatch.countDown();
-                }));
-
-                SessionManager.getCurrentSession().getController().showDialog(dialog);
-
-                try {
-                    countDownLatch.await();
-                    if (exception.get() != null) {
-                        log.warn("Command review NOT granted: session={} ticket={} reason={} — command will not run",
-                                this.session.getId(), result.getTicketId(), exception.get().getMessage());
-                        result.setRiskLevel(Common.RiskLevel.ReviewReject);
-                    } else {
-                        result.setRiskLevel(Common.RiskLevel.ReviewAccept);
-                        result.setApprovedCommandHash(commandHash(command));
-                        log.info("Command review granted: session={} ticket={} approvedHash={} — command may run",
-                                this.session.getId(), result.getTicketId(), result.getApprovedCommandHash());
-                    }
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                } finally {
-                    SessionManager.getCurrentSession().getController().closeDialog();
+        Common.CommandACL acl;
+        var reviewRules = new java.util.HashSet<String>();
+        try {
+            acl = matchRule(command, result);
+            if (acl != null && acl.getAction() == Common.CommandACL.Action.Review) reviewRules.add(acl.getId());
+            for (String statement : statements) {
+                var candidate = new ACLResult();
+                Common.CommandACL matched;
+                try { matched = matchRule(statement, candidate); }
+                catch (PatternSyntaxException invalid) {
+                    result.setCmdAclId(candidate.getCmdAclId()); result.setCmdGroupId(candidate.getCmdGroupId()); throw invalid;
+                }
+                if (matched != null && matched.getAction() == Common.CommandACL.Action.Review) reviewRules.add(matched.getId());
+                if (severity(matched) > severity(acl)) {
+                    acl = matched;
+                    result.setCmdAclId(candidate.getCmdAclId()); result.setCmdGroupId(candidate.getCmdGroupId());
                 }
             }
-            default -> {
-                result.setRiskLevel(Common.RiskLevel.Normal);
-                result.setRiskAction("unknown");
-            }
         }
-
-
+        catch (PatternSyntaxException invalid) {
+            result.setRiskLevel(Common.RiskLevel.Reject);
+            result.setRiskAction("invalid_rule");
+            log.warn("Invalid command ACL: session={} aclId={}", session.getId(), result.getCmdAclId());
+            return result;
+        }
+        if (acl == null) { result.setRiskLevel(Common.RiskLevel.Normal); return result; }
+        switch (acl.getAction()) {
+            case Accept -> { result.setRiskLevel(Common.RiskLevel.Normal); result.setRiskAction("accept"); }
+            case Warning -> { result.setRiskLevel(Common.RiskLevel.Warning); result.setRiskAction("warning"); }
+            case Reject -> { result.setRiskLevel(Common.RiskLevel.Reject); result.setRiskAction("reject"); }
+            case Review -> {
+                // A ticket belongs to one ACL/reviewer set. Never let approval
+                // under one rule authorize a statement governed by another.
+                if (command.codePointCount(0, command.length()) > 4090) {
+                    // Core v3.10.17 stores only run_command[:4090]. Never
+                    // execute a tail that was invisible to the reviewer.
+                    result.setRiskLevel(Common.RiskLevel.ReviewReject);
+                    result.setRiskAction("review_command_too_long");
+                } else if (reviewRules.size() > 1) {
+                    result.setRiskLevel(Common.RiskLevel.ReviewReject);
+                    result.setRiskAction("multiple_review_rules");
+                } else review(command, acl, result);
+            }
+            default -> { result.setRiskLevel(Common.RiskLevel.Reject); result.setRiskAction("unknown"); }
+        }
         return result;
     }
 
-
-    private void createAndWaitTicket(String command, Common.CommandACL commandACL, Connection connection, ACLResult result) {
-        var affectRows = 0;
-
-        var sqlActuator = SessionManager.getCurrentSession()
-                .getDatasource()
-                .getConnectionManager()
-                .getSqlActuator();
-        if (connection != null) {
-            sqlActuator = sqlActuator.withConnection(connection);
-        }
-        try {
-            affectRows = sqlActuator.getAffectedRows(SQL.of(command));
-        } catch (SQLException e) {
-            log.error("get affected rows failed", e);
-        }
-
-        var input = command;
-        if (affectRows != -1) {
-            input = String.format("Affected rows: %d\n%s", affectRows, command);
-        }
-
-
-        var req = ServiceOuterClass.CommandConfirmRequest
-                .newBuilder()
-                .setCmd(input)
-                .setSessionId(this.session.getId())
-                .setCmdAclId(commandACL.getId())
-                .build();
-        var resp = this.serviceBlockingStub.createCommandTicket(req);
-        if (!resp.getStatus().getOk()) {
-            throw new RuntimeException("create command ticket failed: " + resp.getStatus().getErr());
-        }
-        result.setTicketId(extractTicketId(resp.getInfo().getTicketDetailUrl()));
-        log.info("Command review ticket created: session={} ticket={} affectedRowsEstimate={} url={}",
-                this.session.getId(), result.getTicketId(), affectRows, resp.getInfo().getTicketDetailUrl());
-        this.waitForTicketStatusChange(command, resp.getInfo());
+    private static int severity(Common.CommandACL acl) {
+        if (acl == null) return 0;
+        return switch (acl.getAction()) { case Accept -> 1; case Warning -> 2; case Review -> 3; default -> 4; };
     }
 
-    // wisp's CommandConfirmResponse carries no bare ticket id; the only
-    // stable ticket identifier is the trailing UUID of ticket_detail_url
-    // (.../tickets/.../<uuid>). Extract it for audit instead of inventing one.
-    private static final Pattern TICKET_ID_PATTERN =
-            Pattern.compile("([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})");
+    private void review(String command, Common.CommandACL acl, ACLResult result) {
+        result.setRiskAction("review");
+        result.setRiskLevel(Common.RiskLevel.ReviewReject);
+        // One controller has one dialog. A second review must not replace the
+        // first command's dialog or consume its button events.
+        if (!reviewLock.tryLock()) return;
+        Session owner = SessionManager.getCurrentSession();
+        ServiceOuterClass.TicketInfo ticket = null;
+        boolean ticketResolved = false;
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        try {
+            requireActive(owner);
+            var decision = new AtomicReference<Boolean>();
+            var submitted = new CountDownLatch(1);
+            var confirm = new Dialog(MessageUtils.get("msg.dialog.title.command_review"));
+            confirm.setBody(MessageUtils.get("msg.dialog.message.command_review"));
+            confirm.addButton(new Button(MessageUtils.get("btn.label.submit"), "submit:" + UUID.randomUUID(), () -> {
+                if (decision.compareAndSet(null, true)) submitted.countDown();
+            }));
+            confirm.addButton(new Button(MessageUtils.get("btn.label.cancel"), "cancel:" + UUID.randomUUID(), () -> {
+                if (decision.compareAndSet(null, false)) submitted.countDown();
+            }));
+            owner.getController().showDialog(confirm);
+            while (!submitted.await(Math.min(100, remaining(deadline)), TimeUnit.MILLISECONDS)) requireActive(owner);
+            requireActive(owner);
+            if (!Boolean.TRUE.equals(decision.get())) return;
+            // Never estimate affected rows by executing the command, even in a
+            // transaction. Triggers, sequences and existing transactions are not undoable that way.
+            var response = boundedStub(deadline).createCommandTicket(ServiceOuterClass.CommandConfirmRequest.newBuilder()
+                    .setCmd(command).setSessionId(session.getId()).setCmdAclId(acl.getId()).build());
+            if (!response.getStatus().getOk()) throw new IllegalStateException("Ticket creation failed");
+            ticket = response.getInfo();
+            result.setTicketId(extractTicketId(ticket.getTicketDetailUrl()));
+            if (result.getTicketId() == null) throw new IllegalStateException("Missing ticket identity");
+            requireActive(owner);
+            var outcome = new AtomicReference<Boolean>();
+            var wake = new CountDownLatch(1);
+            var waiting = new Dialog(MessageUtils.get("msg.dialog.title.command_review"));
+            waiting.setBody(MessageUtils.get("msg.dialog.message.wait_command_review"));
+            waiting.addButton(new Button(MessageUtils.get("btn.label.cancel"), "cancel:" + UUID.randomUUID(), () -> {
+                if (outcome.compareAndSet(null, false)) wake.countDown();
+            }));
+            owner.getController().showDialog(waiting);
+            while (outcome.get() == null) {
+                requireActive(owner);
+                var checked = boundedStub(deadline).checkTicketState(ServiceOuterClass.TicketRequest.newBuilder()
+                        .setReq(ticket.getCheckReq()).build());
+                requireActive(owner);
+                if (!checked.getStatus().getOk()) throw new IllegalStateException("Ticket status unavailable");
+                switch (checked.getData().getState()) {
+                    case Approved -> { ticketResolved = true; outcome.compareAndSet(null, true); }
+                    case Rejected, Closed -> { ticketResolved = true; outcome.compareAndSet(null, false); }
+                    case Open -> wake.await(Math.min(pollMillis, remaining(deadline)), TimeUnit.MILLISECONDS);
+                    default -> throw new IllegalStateException("Unknown ticket state");
+                }
+            }
+            requireActive(owner);
+            remaining(deadline);
+            if (Boolean.TRUE.equals(outcome.get())) {
+                result.setApprovedCommandHash(commandHash(command));
+                result.setRiskLevel(Common.RiskLevel.ReviewAccept);
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        } catch (RuntimeException failure) {
+            log.warn("Command review denied: session={} ticket={} errorType={}",
+                    session.getId(), result.getTicketId(), failure.getClass().getSimpleName());
+        } finally {
+            // Cancellation is cleanup only: its success must never turn a rejection into approval.
+            if (ticket != null && !ticketResolved) {
+                boolean interrupted = Thread.interrupted();
+                try {
+                    var cancelled = serviceBlockingStub.withDeadlineAfter(5, TimeUnit.SECONDS).cancelTicket(
+                            ServiceOuterClass.TicketRequest.newBuilder().setReq(ticket.getCancelReq()).build());
+                    if (!cancelled.getStatus().getOk()) log.warn("Ticket cleanup rejected: session={} ticket={}", session.getId(), result.getTicketId());
+                }
+                catch (RuntimeException failure) { log.warn("Ticket cleanup failed: session={} ticket={}", session.getId(), result.getTicketId()); }
+                finally { if (interrupted) Thread.currentThread().interrupt(); }
+            }
+            try { if (owner != null) owner.getController().closeDialog(); }
+            finally { reviewLock.unlock(); }
+        }
+    }
 
-    private static String extractTicketId(String ticketDetailUrl) {
-        if (ticketDetailUrl == null || ticketDetailUrl.isEmpty()) {
-            return null;
-        }
-        var matcher = TICKET_ID_PATTERN.matcher(ticketDetailUrl);
+    private static void requireActive(Session owner) {
+        if (owner == null || !owner.isActive() || (owner instanceof JMSSession jms && !jms.allowsCredentialRenewal()))
+            throw new IllegalStateException("Session is no longer authorized");
+    }
+
+    private static long remaining(long deadline) {
+        long millis = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+        if (millis <= 0) throw new IllegalStateException("Command review timed out");
+        return millis;
+    }
+
+    private ServiceGrpc.ServiceBlockingStub boundedStub(long deadline) {
+        return serviceBlockingStub.withDeadlineAfter(Math.min(15000, remaining(deadline)), TimeUnit.MILLISECONDS);
+    }
+
+    private static final Pattern TICKET_ID_PATTERN = Pattern.compile("([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})");
+    private static String extractTicketId(String url) {
+        if (url == null) return null;
+        var matcher = TICKET_ID_PATTERN.matcher(url);
         String last = null;
-        while (matcher.find()) {
-            last = matcher.group(1);
-        }
+        while (matcher.find()) last = matcher.group(1);
         return last;
     }
 
-
-    private void openCommandReviewEvent(Runnable cancel, String command, long startTIme, long endTime) {
-        var dialog = new Dialog(MessageUtils.get("msg.dialog.title.command_review"));
-        dialog.setBody(MessageUtils.get("msg.dialog.message.wait_command_review"));
-        dialog.addButton(new Button(MessageUtils.get("btn.label.cancel"), "cancel", () -> {
-            cancel.run();
-            SessionManager.getCurrentSession().getController().closeDialog();
-        }));
-        SessionManager.getCurrentSession().getController().showDialog(dialog);
-    }
-
-    private void closeCommandReviewEvent() {
-        SessionManager.getCurrentSession().getController().closeDialog();
-    }
-
-    private static final long WAIT_TICKET_TIMEOUT = 30 * 60 * 1000;
-    private static final long WAIT_TICKET_INTERVAL = 5 * 1000;
-
-    private void waitForTicketStatusChange(String cmd, ServiceOuterClass.TicketInfo ticketInfo) {
-
-        long startTime = System.currentTimeMillis();
-        long endTime = startTime + WAIT_TICKET_TIMEOUT;
-
-        CountDownLatch cdl = new CountDownLatch(1);
-        Timer timer = new Timer();
-
-        final AtomicBoolean ticketClosed = new AtomicBoolean(false);
-        AtomicReference<RuntimeException> exception = new AtomicReference<>(null);
-
-        this.openCommandReviewEvent(() -> {
-            exception.set(new RuntimeException(MessageUtils.get("msg.error.user_cancel_command_review")));
-            cdl.countDown();
-            timer.cancel();
-
-        }, cmd, startTime, endTime);
-
-        try {
-            var stub = this.serviceBlockingStub;
-            log.info("Waiting for ticket approval: session={} pollIntervalMs={} timeoutMs={}",
-                    this.session.getId(), WAIT_TICKET_INTERVAL, WAIT_TICKET_TIMEOUT);
-
-            var token = SessionManager.getContextToken();
-            timer.schedule(new TimerTask() {
-                @Override
-                public void run() {
-                    SessionManager.setContext(token);
-
-                    if (System.currentTimeMillis() > endTime) {
-                        log.warn("Ticket approval timed out after {}ms: session={} command={}",
-                                WAIT_TICKET_TIMEOUT, ACLFilterImpl.this.session.getId(), cmd);
-                        exception.set(new RuntimeException(MessageUtils.get("msg.error.command_review_timeout")));
-                        timer.cancel();
-                        cdl.countDown();
-                    }
-
-                    var checkRequest = ServiceOuterClass
-                            .TicketRequest.newBuilder()
-                            .setReq(ticketInfo.getCheckReq())
-                            .build();
-
-                    var checkResponse = stub.checkTicketState(checkRequest);
-
-                    if (!checkResponse.getStatus().getOk()) {
-                        throw new RuntimeException("Failed to check ticket status: " + checkResponse.getStatus().getErr());
-                    }
-
-                    switch (checkResponse.getData().getState()) {
-                        case Approved -> {
-                            log.info("Ticket approved by {}: session={}",
-                                    checkResponse.getData().getProcessor(),
-                                    ACLFilterImpl.this.session.getId());
-                            ticketClosed.set(true);
-                            timer.cancel();
-                            cdl.countDown();
-                        }
-                        case Rejected, Closed -> {
-                            log.warn("Ticket {} by {}: session={}",
-                                    checkResponse.getData().getState(),
-                                    checkResponse.getData().getProcessor(),
-                                    ACLFilterImpl.this.session.getId());
-                            ticketClosed.set(true);
-                            exception.set(new RuntimeException(MessageUtils.get("msg.error.command_review_reject", checkResponse.getData().getProcessor())));
-                            timer.cancel();
-                            cdl.countDown();
-                        }
-                    }
-                }
-            }, 0, WAIT_TICKET_INTERVAL);
-
-            try {
-                cdl.await();
-                if (exception.get() != null) {
-                    throw exception.get();
-                }
-            } catch (InterruptedException e) {
-                log.error("wait for ticket status change failed: {}", e.getMessage());
-            }
-        } finally {
-            this.closeCommandReviewEvent();
-            if (!ticketClosed.get()) {
-                this.closeTicket(ticketInfo);
-            }
-        }
-    }
-
-    private void closeTicket(ServiceOuterClass.TicketInfo ticketInfo) {        var cancelRequest = ServiceOuterClass.TicketRequest.newBuilder()
-                .setReq(ticketInfo.getCancelReq())
-                .build();
-        var cancelResponse = this.serviceBlockingStub.cancelTicket(cancelRequest);
-        if (!cancelResponse.getStatus().getOk()) {
-            log.error("close ticket failed: {}", cancelResponse.getStatus().getErr());
-        }
-    }
-
-
     private Common.CommandACL matchRule(String command, ACLResult result) {
-        for (Common.CommandACL commandACL : this.commandACLs) {
-            for (Common.CommandGroup commandGroup : commandACL.getCommandGroupsList()) {
-
-                int flags = Pattern.UNICODE_CASE;
-                if (commandGroup.getIgnoreCase()) {
-                    flags |= Pattern.CASE_INSENSITIVE;
-                }
-                try {
-                    Pattern pattern = Pattern.compile(commandGroup.getPattern(), flags);
-                    if (pattern.matcher(command.toLowerCase()).find()) {
-                        result.setCmdAclId(commandACL.getId());
-                        result.setCmdGroupId(commandGroup.getId());
-                        return commandACL;
-                    }
-                } catch (PatternSyntaxException e) {
-                    log.error("invalid pattern: {}", commandGroup.getPattern(), e);
-                }
-            }
+        for (var acl : commandACLs) for (var group : acl.getCommandGroupsList()) {
+            result.setCmdAclId(acl.getId()); result.setCmdGroupId(group.getId());
+            int flags = Pattern.UNICODE_CASE | (group.getIgnoreCase() ? Pattern.CASE_INSENSITIVE : 0);
+            if (Pattern.compile(group.getPattern(), flags).matcher(command).find()) return acl;
         }
+        result.setCmdAclId(null); result.setCmdGroupId(null);
         return null;
     }
 

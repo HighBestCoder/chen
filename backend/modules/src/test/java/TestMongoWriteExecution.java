@@ -4,6 +4,7 @@ import org.jumpserver.chen.framework.datasource.sql.SQLQueryResult;
 import org.jumpserver.chen.modules.mongodb.MongoConnectionManager;
 import org.jumpserver.chen.modules.mongodb.command.MongoActuator;
 import org.jumpserver.chen.modules.mongodb.command.MongoCommandParser;
+import java.util.List;
 
 /**
  * Live probe: drives aggregate and the write commands through the real Mongo
@@ -17,10 +18,10 @@ import org.jumpserver.chen.modules.mongodb.command.MongoCommandParser;
 public class TestMongoWriteExecution {
     static int failures = 0;
 
-    private static final String DB = "t_a1_write";
+    private static final String DB = "t_a1_write_" + java.util.UUID.randomUUID().toString().replace("-", "");
     private static final String COLL = "order";
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         String host = System.getenv().getOrDefault("MONGO_HOST", "127.0.0.1");
         int port = Integer.parseInt(System.getenv().getOrDefault("MONGO_PORT", "27017"));
 
@@ -30,7 +31,11 @@ public class TestMongoWriteExecution {
         info.setPort(port);
         info.setDb(DB);
 
+        if (args.length > 0 && args[0].equals("--fixture")) {
+            info = TestConnectionTlsIntegration.info("mongodb");
+        }
         MongoConnectionManager cm = new MongoConnectionManager(info, null);
+        cm.setDatabaseContext(DB);
         MongoActuator actuator = new MongoActuator(cm);
         MongoCommandParser parser = new MongoCommandParser();
 
@@ -44,6 +49,8 @@ public class TestMongoWriteExecution {
             aggregateGroupsRows(parser, actuator);
             aggregateWithoutLimitIsCapped(parser, actuator);
             aggregateKeepsAuthorsOwnLimit(parser, actuator);
+            aggregateTerminalWriteAndExpansion(parser, actuator, cm);
+            complexDocumentsRemainComplete(parser, actuator, cm);
             dropRemovesCollection(parser, actuator, cm);
         } finally {
             try {
@@ -144,6 +151,10 @@ public class TestMongoWriteExecution {
                 bulk + ".aggregate([{$match: {}}, {$limit: 3}])", 5);
         report("pipeline $limit wins over console limit", own.getData().size() == 3,
                 3, own.getData().size());
+        SQLQueryResult chained = execute(parser, actuator,
+                bulk + ".aggregate([{$limit: 10}]).limit(2)", 5);
+        report("aggregate cursor limit is not ignored", chained.getData().size() == 2,
+                2, chained.getData().size());
 
         run(parser, actuator, bulk + ".drop()");
     }
@@ -160,6 +171,42 @@ public class TestMongoWriteExecution {
             }
         }
         report("collection is gone after drop", !stillThere, false, stillThere);
+    }
+
+    private static void aggregateTerminalWriteAndExpansion(MongoCommandParser parser, MongoActuator actuator,
+                                                            MongoConnectionManager cm) {
+        var collection = cm.getDatabase(DB).getCollection("bounds");
+        List<Integer> values = new java.util.ArrayList<>();
+        for (int i = 0; i < 1500; i++) values.add(i);
+        collection.insertOne(new Document("items", values));
+        var expanded = execute(parser, actuator,
+                "db.bounds.aggregate([{$limit: 1}, {$unwind: '$items'}])", 5);
+        report("limit before unwind cannot exhaust GUI memory", expanded.getData().size() == 1000,
+                1000, expanded.getData().size());
+        report("expanded result reports truncation", expanded.isTruncated(), true, expanded.isTruncated());
+
+        var out = execute(parser, actuator, "db.bounds.aggregate([{$unwind: '$items'}, {$project: {_id: 0}}, {$out: 'bounds_out'}])", 5);
+        long stored = cm.getDatabase(DB).getCollection("bounds_out").countDocuments();
+        report("terminal $out is not followed by injected limit", stored == 1500, 1500L, stored);
+        var zero = execute(parser, actuator, "db.bounds_out.find({}).limit(0)", 5);
+        report("limit zero is bounded on GUI path", zero.getData().size() == 1000, 1000, zero.getData().size());
+    }
+
+    private static void complexDocumentsRemainComplete(MongoCommandParser parser, MongoActuator actuator,
+                                                       MongoConnectionManager cm) {
+        Document document = new Document();
+        for (int i = 0; i < 600; i++) document.put("f" + i, "中");
+        List<Document> items = new java.util.ArrayList<>();
+        for (int i = 0; i < 300; i++) items.add(new Document("city", "北京"));
+        document.put("items", items);
+        cm.getDatabase(DB).getCollection("complete").insertOne(document);
+        var result = execute(parser, actuator, "db.complete.find({}, {_id: 0})", 5);
+        report("driver result retains all wide fields", result.getFields().size() == 601, 601, result.getFields().size());
+        int arrayIndex = fieldIndex(result, "items");
+        int count = arrayIndex < 0 ? -1 : Document.parse("{v:" + result.getData().get(0).get(arrayIndex) + "}")
+                .getList("v", Document.class).size();
+        report("driver result retains all array elements", count == 300, 300, count);
+        report("driver result counts all UTF-8 leaves", result.getStreamedSizeBytes() == 3600, 3600L, result.getStreamedSizeBytes());
     }
 
     private static int fieldIndex(SQLQueryResult result, String name) {

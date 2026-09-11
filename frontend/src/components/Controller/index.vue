@@ -23,6 +23,7 @@
 </template>
 
 <script>
+import { consumeInstanceToken } from '@/api/instances'
 import { getUrlParams } from '@/utils/field'
 import { LunaEvent, MESSAGES } from '@/utils/luna'
 import { index } from '@/request'
@@ -49,25 +50,30 @@ export default {
     this.auth()
     this.handleRenewLunaSession()
   },
+  beforeDestroy() {
+    clearInterval(this.heartBeatInterval)
+    Object.entries(this.activityHandlers || {}).forEach(([event, handler]) => document.body.removeEventListener(event, handler))
+    this.lunaEvent.destroy()
+    if (this.ws) {
+      this.ws.onclose = this.ws.onmessage = null
+      this.ws.close()
+    }
+  },
   methods: {
     handleRenewLunaSession() {
-      const lunaEvent = this.lunaEvent
-      document.body.addEventListener('keydown', function() {
-        lunaEvent.sendEventToLuna(MESSAGES.KEYBOARDEVENT)
-      })
-      document.body.addEventListener('keyup', function() {
-        lunaEvent.sendEventToLuna(MESSAGES.KEYBOARDEVENT)
-      })
-      document.body.addEventListener('click', function() {
-        lunaEvent.sendEventToLuna(MESSAGES.MOUSEEVENT)
-      })
-      document.body.addEventListener('dblclick', function() {
-        lunaEvent.sendEventToLuna(MESSAGES.MOUSEEVENT)
-      })
+      this.activityHandlers = {}
+      for (const event of ['keydown', 'keyup', 'click', 'dblclick']) {
+        const handler = () => this.lunaEvent.sendEventToLuna(
+          event.startsWith('key') ? MESSAGES.KEYBOARDEVENT : MESSAGES.MOUSEEVENT)
+        this.activityHandlers[event] = handler
+        document.body.addEventListener(event, handler)
+      }
     },
 
     auth() {
       const params = getUrlParams(window.location.href)
+      const instanceToken = consumeInstanceToken()
+      if (instanceToken) params.token = instanceToken
       if (!Object.hasOwn(params, 'token')) {
         // 提示没有 token
         this.dialogOptions.title = 'Error'
@@ -159,6 +165,7 @@ export default {
       })
     },
     startHeartBeat() {
+      clearInterval(this.heartBeatInterval)
       this.heartBeatInterval = setInterval(() => {
         this.ws.send(JSON.stringify({
           type: 'ping'
@@ -166,6 +173,7 @@ export default {
       }, 1000 * 10)
     },
     onCloseSession() {
+      clearInterval(this.heartBeatInterval)
       this.$emit('close')
       this.lunaEvent.sendEventToLuna(MESSAGES.CLOSE)
     }

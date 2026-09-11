@@ -2,7 +2,6 @@ package org.jumpserver.chen.framework.jms.asciinema;
 
 import com.google.gson.Gson;
 import com.google.gson.annotations.SerializedName;
-import org.jumpserver.chen.framework.utils.TimeUtils;
 
 import java.io.IOException;
 import java.io.Writer;
@@ -18,8 +17,14 @@ public class AsciinemaWriter {
     private final Config config;
     private final Writer writer;
     private final long timestampNano;
+    private final java.util.function.LongSupplier monotonicClock;
 
     public AsciinemaWriter(Writer writer) {
+        this(writer, System::nanoTime);
+    }
+
+    public AsciinemaWriter(Writer writer, java.util.function.LongSupplier monotonicClock) {
+        this.monotonicClock = monotonicClock;
         this.config = new Config();
         this.config.width = 80;
         this.config.height = 40;
@@ -27,7 +32,7 @@ public class AsciinemaWriter {
         this.config.envTerm = DEFAULT_TERM;
 
         this.writer = writer;
-        this.timestampNano = TimeUtils.getNowUnixNanoTIme();
+        this.timestampNano = monotonicClock.getAsLong();
     }
 
     public void writeHeader() throws IOException {
@@ -47,13 +52,13 @@ public class AsciinemaWriter {
     }
 
     public void writeRow(byte[] p) throws IOException {
-        long now = TimeUtils.getNowUnixNanoTIme();
+        long now = monotonicClock.getAsLong();
         double ts = (now - this.timestampNano) / 1_000_000_000.0;
         this.writeStdout(ts, p);
     }
 
     public void writeStdout(double ts, byte[] data) throws IOException {
-        Object[] row = new Object[]{ts, "o", new String(data)};
+        Object[] row = new Object[]{ts, "o", new String(data, java.nio.charset.StandardCharsets.UTF_8)};
         Gson gson = new Gson();
         String json = gson.toJson(row) + NEW_LINE;
         this.writer.write(json);

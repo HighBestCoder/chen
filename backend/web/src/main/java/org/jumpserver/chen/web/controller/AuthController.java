@@ -18,6 +18,9 @@ import java.util.Locale;
 @RequestMapping("/api/auth")
 public class AuthController {
 
+    @org.springframework.beans.factory.annotation.Value("${chen.trusted-proxies:}")
+    private String trustedProxies = "";
+
     @Autowired
     private SessionService sessionService;
 
@@ -36,14 +39,7 @@ public class AuthController {
     }
 
     private String getRemoteAddr(HttpServletRequest request) {
-        if (request.getHeader("x-forwarded-for") == null) {
-            return request.getRemoteAddr();
-        }
-        var remotes = request.getHeader("x-forwarded-for").split(",");
-        if (remotes.length > 0) {
-            return remotes[0];
-        }
-        return request.getHeader("x-forwarded-for");
+        return ClientAddress.resolve(request, trustedProxies);
     }
 
     private Locale getLanguage(HttpServletRequest request) {

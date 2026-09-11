@@ -27,6 +27,7 @@
         :key="item.name"
         :ref="item.name"
         :meta="item.meta"
+        :initial-state="states[item.name]"
         :data="item.data"
         :state-subject="subjects.stateSubject"
         :update-subject="subjects.updateResultSubject"
@@ -47,6 +48,7 @@ export default {
     Log: () => import('./Log.vue')
   },
   props: {
+    states: { type: Object, default: () => ({}) },
     subjects: {
       type: Object,
       default: () => ({})
@@ -54,13 +56,14 @@ export default {
   },
   data() {
     return {
+      subscriptions: [],
       tabNum: 0,
       activeTab: 'log',
       tabs: []
     }
   },
   mounted() {
-    this.subjects.newResultSubject.subscribe((data) => {
+    this.subscriptions.push(this.subjects.newResultSubject.subscribe((data) => {
       this.tabs.push({
         title: data.title,
         name: data.title,
@@ -85,30 +88,29 @@ export default {
         }
       })
       this.activeTab = data.title
-    })
+    }))
 
-    this.subjects.updateResultSubject.subscribe((data) => {
+    this.subscriptions.push(this.subjects.updateResultSubject.subscribe((data) => {
       this.tabs.forEach((tab) => {
         if (tab.name === data.title) {
           tab.data = data.data
           this.activeTab = data.title
         }
       })
-    })
-    this.subjects.deleteResultSubject.subscribe((data) => {
-      if (data instanceof String) {
+    }))
+    this.subscriptions.push(this.subjects.deleteResultSubject.subscribe((data) => {
+      if (typeof data === 'string') {
         this.onTabClose(data, false)
-      }
-      if (data instanceof Array) {
+      } else if (Array.isArray(data)) {
         data.forEach((item) => {
           this.onTabClose(item, false)
         })
-      }
-      if (data instanceof Object) {
+      } else if (data && typeof data === 'object') {
         this.onTabClose(data.sql, false)
       }
-    })
+    }))
   },
+  beforeDestroy() { this.subscriptions.forEach(subscription => subscription.unsubscribe()) },
   methods: {
     onAction(dataView, action) {
       action.dataView = dataView

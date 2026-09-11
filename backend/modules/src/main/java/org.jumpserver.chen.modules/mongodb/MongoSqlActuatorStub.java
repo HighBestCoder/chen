@@ -100,6 +100,7 @@ public class MongoSqlActuatorStub implements SQLActuator {
         CommandRecord record = new CommandRecord(plan.getTargetSQL());
         record.applyACL(plan.getAclResult());
         MongoCommand command = commandFromPlan(plan);
+        SessionManager.getCurrentSession().beginCommand(record);
         try {
             SQLQueryResult result = execute(plan);
             record.setOutput(result);
@@ -142,15 +143,22 @@ public class MongoSqlActuatorStub implements SQLActuator {
 
     @Override
     public SQLExecutePlan createPlan(String schema, String table, SQLQueryParams sqlQueryParams) {
-        SQLExecutePlan plan = new SQLExecutePlan(previewCommand(table), DbType.other) {
-            @Override
-            public void generateTargetSQL() {
-                setTargetSQL(getSourceSQL());
-            }
-        };
+        SQLExecutePlan plan = new MongoPreviewPlan(table);
         plan.setSqlActuator(this);
         plan.setSqlQueryParams(sqlQueryParams == null ? new SQLQueryParams() : sqlQueryParams);
         return plan;
+    }
+
+    private final class MongoPreviewPlan extends SQLExecutePlan {
+        private final String collection;
+        private MongoPreviewPlan(String collection) {
+            super(previewCommand(collection), DbType.other);
+            this.collection = collection;
+        }
+        @Override
+        public void generateTargetSQL() {
+            setTargetSQL(getSourceSQL());
+        }
     }
 
     @Override
@@ -183,13 +191,22 @@ public class MongoSqlActuatorStub implements SQLActuator {
         iterable = iterable.limit(resolveLimit(params.getLimit()));
 
         List<Document> documents = new ArrayList<>();
-        iterable.forEach(documents::add);
+        int cap = resolveLimit(params.getLimit());
+        boolean truncated;
+        try (var cursor = iterable.limit(cap + 1).iterator()) {
+            while (documents.size() < cap && cursor.hasNext()) documents.add(cursor.next());
+            truncated = cursor.hasNext();
+        }
         long queryDone = System.currentTimeMillis();
         long total = collection.countDocuments();
         SQLQueryResult result = this.adapter.toResult(
                 commandText(collectionName, params.getLimit()),
                 collectionName, documents, start, queryDone, total, params.getLimit() >= 0);
 
+        result.setTruncated(params.getLimit() < 0 && truncated);
+        if (result.isTruncated() && plan.getRowConsumer() != null) {
+            throw new SQLException("Export exceeds the MongoDB row limit; narrow the query before exporting");
+        }
         streamRowsIfRequested(result, plan.getRowConsumer());
         return result;
     }
@@ -202,21 +219,21 @@ public class MongoSqlActuatorStub implements SQLActuator {
         for (List<Object> row : result.getData()) {
             sink.accept(row);
         }
+        sink.finish();
     }
 
     private int resolveLimit(int requested) {
         if (requested < 0) {
             return EXPORT_MAX;
         }
-        return requested > 0 ? requested : 50;
+        return requested > 0 ? Math.min(requested, EXPORT_MAX) : 50;
     }
 
     private String collectionFromPlan(SQLExecutePlan plan) throws SQLException {
-        String sql = plan == null ? null : plan.getSourceSQL();
-        if (sql == null || !sql.startsWith("db.") || !sql.contains(".find")) {
-            throw new SQLException("Unsupported Mongo preview plan: " + sql);
+        if (!(plan instanceof MongoPreviewPlan preview)) {
+            throw new SQLException("Unsupported Mongo preview plan");
         }
-        return sql.substring(3, sql.indexOf(".find"));
+        return preview.collection;
     }
 
     private String currentDatabase() throws SQLException {

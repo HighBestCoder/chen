@@ -19,13 +19,13 @@ index.interceptors.request.use((config) => {
 
 index.interceptors.response.use((resp) => {
   return resp
-}, (error) => {
-  const reader = new FileReader()
-  reader.onload = function(event) {
-    const text = event.target.result
-    Message.error(text)
+}, async(error) => {
+  let data = error.response && error.response.data
+  if (typeof Blob !== 'undefined' && data instanceof Blob) {
+    try { data = await data.text() } catch (_) { data = null }
   }
-  reader.readAsText(error.response.data)
+  const detail = typeof data === 'string' ? data : data && (data.detail || data.message)
+  Message.error(typeof detail === 'string' && detail ? detail : (error.message || 'Request failed'))
   return Promise.reject(error)
 })
 

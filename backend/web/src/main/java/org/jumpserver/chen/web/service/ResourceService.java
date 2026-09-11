@@ -20,7 +20,7 @@ public class ResourceService {
             var ds = SessionManager.getCurrentSession().getDatasource();
             return ds.getChildren(node, !force);
         } catch (SQLException e) {
-            throw new ChenException(String.format("获取 %s子节点失败", node.getLabel()), e);
+            throw new ChenException(String.format("获取 %s子节点失败", node == null ? "root" : node.getLabel()), e);
         }
     }
 
@@ -34,7 +34,7 @@ public class ResourceService {
             var ds = SessionManager.getCurrentSession().getDatasource();
             return ds.doAction(node, action);
         } catch (Exception e) {
-            throw new ChenException(String.format("执行节点动作 %s 失败", node.getLabel()), e);
+            throw new ChenException(String.format("执行节点动作 %s 失败", node == null ? "root" : node.getLabel()), e);
         }
     }
 

@@ -31,17 +31,22 @@ export default {
     }
   },
   mounted() {
-    this.subject.subscribe((data) => {
+    this.subscription = this.subject.subscribe((data) => {
       this.title = data.title
       this.message = data.message
       this.type = data.type
       this.opened = true
       this.closeDelay = data.closeDelay || 5
 
-      setTimeout(() => {
+      clearTimeout(this.dismissTimer)
+      this.dismissTimer = setTimeout(() => {
         this.opened = false
       }, this.closeDelay * 1000)
     })
+  },
+  beforeDestroy() {
+    this.subscription.unsubscribe()
+    clearTimeout(this.dismissTimer)
   },
   methods: {
     onClose() {

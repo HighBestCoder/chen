@@ -11,7 +11,7 @@ import org.jumpserver.chen.framework.ws.io.PacketIO;
 @Slf4j
 public class BaseController implements Controller {
     private final PacketIO packetIO;
-    private Dialog currentDialog;
+    private volatile Dialog currentDialog;
 
     public BaseController(PacketIO packetIO) {
         this.packetIO = packetIO;
@@ -51,12 +51,13 @@ public class BaseController implements Controller {
     }
 
     private void onDialogEvent(String event) {
-        if (this.currentDialog == null) {
+        var dialog = this.currentDialog;
+        if (dialog == null) {
             this.closeDialog();
             return;
         }
         try {
-            var method = this.currentDialog.getEvent(event);
+            var method = dialog.getEvent(event);
             if (method != null) {
                 method.run();
             }

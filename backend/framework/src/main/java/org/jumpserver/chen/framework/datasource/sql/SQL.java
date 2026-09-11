@@ -14,6 +14,14 @@ public class SQL {
 
 
     private String sql;
+    private List<Object> parameters = List.of();
+
+    /** Fixed metadata query with JDBC value parameters, never SQL interpolation. */
+    public static SQL bound(String sql, Object... values) {
+        SQL query = new SQL(sql);
+        query.parameters = java.util.Arrays.asList(values.clone());
+        return query;
+    }
 
     public SQL(String sql) {
         this.sql = sql;

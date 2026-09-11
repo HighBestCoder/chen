@@ -20,6 +20,7 @@ export default {
   name: 'DataView',
   components: { ExportDataDialog, Toolbar, HotTable },
   props: {
+    initialState: { type: Object, default: null },
     meta: {
       type: Object,
       default: () => ({})
@@ -60,6 +61,7 @@ export default {
           type: 'button',
           icon: 'iconfont icon-chen-first_page',
           onClick: this.onFirstPage,
+          disabled: () => this.state.page <= 1,
           hidden: () => {
             return !this.state.paged
           }
@@ -68,6 +70,7 @@ export default {
           type: 'button',
           icon: 'iconfont icon-chen-icon_paging_left',
           onClick: this.onPrevPage,
+          disabled: () => this.state.page <= 1,
           hidden: () => {
             return !this.state.paged
           }
@@ -75,7 +78,7 @@ export default {
         total: {
           type: 'text',
           hidden: () => {
-            return this.state.paged
+            return !this.state.manualLimitDetected
           },
           value: () => {
             return '共 ' + this.$t('common.num_row', { num: this.state.total }) + this.dataSizeSuffix()
@@ -85,7 +88,7 @@ export default {
           type: 'dropdown',
           trigger: 'click',
           hidden: () => {
-            return !this.state.paged
+            return this.state.manualLimitDetected
           },
           options: [
             {
@@ -114,10 +117,9 @@ export default {
           },
           customDisplayContent: () => {
             let content = ''
-            if (this.isStatePaged) {
-              content += this.$t('common.num_row', { num: this.state.limit }) + ' | ' + content
-            }
-            content += this.$tc('button.total') + this.$t('common.num_row', { num: this.state.total })
+            content += this.$t('common.num_row', { num: this.state.limit }) + ' | '
+
+            content += this.state.total < 0 ? this.$t('common.total_unknown') : this.$tc('button.total') + this.$t('common.num_row', { num: this.state.total })
             content += this.dataSizeSuffix()
             return content
           }
@@ -126,6 +128,7 @@ export default {
           type: 'button',
           icon: 'iconfont icon-chen-icon_paging_right',
           onClick: this.onNextPage,
+          disabled: () => this.state.total >= 0 && this.state.page * this.state.limit >= this.state.total,
           hidden: () => {
             return !this.state.paged
           }
@@ -134,6 +137,7 @@ export default {
           type: 'button',
           icon: 'iconfont icon-chen-last-page',
           onClick: this.onLastPage,
+          disabled: () => this.state.total >= 0 && this.state.page * this.state.limit >= this.state.total,
           hidden: () => {
             return !this.state.paged
           }
@@ -174,12 +178,27 @@ export default {
       return this.state.paged
     },
     iToolBarItems() {
-      return Object.assign(this.defaultToolBarItems, this.toolBarItems)
+      const items = { ...this.defaultToolBarItems, ...this.toolBarItems }
+      items.pagination = { ...items.pagination, options: items.pagination.options.filter(option => option.value <= (this.state.maxDisplayLimit || 50000)) }
+      for (const name of Object.keys(items)) {
+        const item = items[name]
+        const disabled = item.disabled
+        items[name] = { ...item, disabled: () => this.state.loading || this.state.disconnected ||
+          (typeof disabled === 'function' ? disabled() : disabled) }
+      }
+      return items
     }
   },
   watch: {
+    initialState: {
+      immediate: true,
+      handler(value) { if (value) this.state = value }
+    },
     data() {
-      if (!this.init) {
+      if (!this.data) return
+      const names = this.data.fields.map(field => field.name)
+      const headers = this.hotSettings.colHeaders
+      if (!this.init || names.length !== headers.length || names.some((name, i) => name !== headers[i])) {
         this.initTable()
       } else {
         this.reloadTable()
@@ -187,11 +206,15 @@ export default {
     }
   },
   mounted() {
-    this.stateSubject.subscribe((state) => {
+    if (this.data) this.initTable()
+    this.stateSubscription = this.stateSubject.subscribe((state) => {
       if (state.title === this.meta.title) {
         this.state = state
       }
     })
+  },
+  beforeDestroy() {
+    this.stateSubscription.unsubscribe()
   },
   methods: {
     getState() {
@@ -223,7 +246,9 @@ export default {
       const headers = this.data.fields.map((item) => item.name)
       const columns = this.data.fields.map((item) => {
         return {
-          data: item.name,
+          // A BSON field/SQL alias may literally contain dots. String accessors
+          // are treated as nested paths by Handsontable and lose such values.
+          data: row => row[item.name],
           type: 'text',
           readOnly: true
         }
@@ -257,12 +282,15 @@ export default {
     onExportSubmit(scope) {
       this.exportDataDialogVisible = false
       if (scope === 'selected') {
-        this.$emit('action', { action: 'export', data: { scope, rows: this.getSelectedRows() }})
+        this.$emit('action', { action: 'export', data: { scope, rowIndices: this.getSelectedRowIndices(), revision: this.data.revision }})
         return
       }
       this.$emit('action', { action: 'export', data: scope })
     },
     getSelectedRows() {
+      return this.getSelectedRowIndices().map(index => this.data.data[index])
+    },
+    getSelectedRowIndices() {
       const hotInstance = this.$refs.hostTable.hotInstance
       const ranges = hotInstance.getSelectedRange() || []
       const selected = []
@@ -271,11 +299,13 @@ export default {
         const from = Math.min(range.from.row, range.to.row)
         const to = Math.max(range.from.row, range.to.row)
         for (let row = from; row <= to; row++) {
-          if (row < 0 || row >= this.data.data.length || seen.has(row)) {
+          if (row < 0 || row >= this.data.data.length) {
             continue
           }
-          seen.add(row)
-          selected.push(this.data.data[row])
+          const index = hotInstance.toPhysicalRow(row)
+          if (index == null || seen.has(index)) continue
+          seen.add(index)
+          selected.push(index)
         }
       })
       return selected

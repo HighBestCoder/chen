@@ -1,5 +1,10 @@
 <template>
   <div v-loading="state.loading" class="container">
+    <div v-if="store.getters.profile.dbType === 'mongodb'" class="instance-bar">
+      <span>{{ store.getters.profile.assetName }}</span>
+      <el-button size="mini" @click="instanceDialogVisible = true">{{ $t('instance.title') }}</el-button>
+      <InstanceDialog v-if="instanceDialogVisible" @close="instanceDialogVisible = false" />
+    </div>
     <div class="content">
       <SplitPane :default-percent="40" :min-percent="20" split="horizontal">
         <template slot="paneL">
@@ -18,6 +23,7 @@
             </div>
             <ResultBar
                 :subjects="subjects"
+                :states="resultStates"
                 @closeDataView="onCloseDataView"
                 @dataViewAction="onDataViewAction"
                 @limitChange="onLimitChange"
@@ -30,6 +36,7 @@
 </template>
 
 <script>
+import InstanceDialog from './InstanceDialog.vue'
 import CodeEditor from '@/components/Main/Explore/QueryConsole/CodeEditor.vue'
 import ResultBar from '@/components/Main/Explore/QueryConsole/ResultBar.vue'
 import store from '@/store'
@@ -38,7 +45,7 @@ import Message from '@/components/Main/Explore/Message.vue'
 import SplitPane from 'vue-splitpane'
 
 export default {
-  components: { Message, ResultBar, CodeEditor, SplitPane },
+  components: { InstanceDialog, Message, ResultBar, CodeEditor, SplitPane },
   props: {
     tab: {
       type: Object,
@@ -55,7 +62,10 @@ export default {
   },
   data() {
     return {
+      store,
+      instanceDialogVisible: false,
       heartBeatInterval: 0,
+      resultStates: {},
       ws: null,
       state: {
         loading: false,
@@ -80,7 +90,10 @@ export default {
   },
   beforeDestroy() {
     clearInterval(this.heartBeatInterval)
-    this.ws.close()
+    if (this.ws) {
+      this.ws.onopen = this.ws.onmessage = this.ws.onclose = this.ws.onerror = null
+      this.ws.close()
+    }
   },
 
   methods: {
@@ -102,6 +115,14 @@ export default {
         }
         this.ws.send(JSON.stringify(connect))
       }
+      ws.onclose = () => {
+        clearInterval(this.heartBeatInterval)
+        this.tab.loading = false
+        this.state = { ...this.state, loading: false, inQuery: false, disconnected: true }
+        Object.entries(this.resultStates).forEach(([title, state]) => this.$set(this.resultStates, title, { ...state, loading: false, disconnected: true }))
+        this.subjects.messageSubject.next({ title: 'Connection closed', message: 'Reconnect to continue.', type: 'error' })
+      }
+      ws.onerror = ws.onclose
       this.ws = ws
     },
     handleWSMessage(pkt) {
@@ -122,9 +143,13 @@ export default {
         case 'update_data_view':
           this.subjects.updateResultSubject.next(pkt.data)
           break
-        case 'close_data_view':
+        case 'close_data_view': {
+          (Array.isArray(pkt.data) ? pkt.data : [pkt.data]).forEach(item => {
+            this.$delete(this.resultStates, typeof item === 'string' ? item : item && item.sql)
+          })
           this.subjects.deleteResultSubject.next(pkt.data)
           break
+        }
         case 'message':
           this.subjects.messageSubject.next(pkt.data)
           break
@@ -135,31 +160,37 @@ export default {
           if (pkt.data.title === this.tab.title) {
             this.state = pkt.data
           } else {
+            this.$set(this.resultStates, pkt.data.title, pkt.data)
             this.subjects.stateSubject.next(pkt.data)
           }
           break
       }
     },
     startHeartBeat() {
+      clearInterval(this.heartBeatInterval)
       this.heartBeatInterval = setInterval(() => {
-        this.ws.send(JSON.stringify({
-          type: 'ping'
-        }))
+        if (this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: 'ping' }))
       }, 1000 * 10)
     },
     onEditorAction(action) {
+      if (this.state.disconnected) return
       this.ws.send(JSON.stringify({ type: 'query_console_action', data: action }))
     },
     onDataViewAction(action) {
+      if (this.state.disconnected) return
       this.ws.send(JSON.stringify({ type: 'data_view_action', data: action }))
     },
     onRunSql(sql) {
+      if (this.state.disconnected) return
       this.ws.send(JSON.stringify({ type: 'sql', data: sql }))
     },
     onCloseDataView(name) {
+      if (this.state.disconnected) return
+      this.$delete(this.resultStates, name)
       this.ws.send(JSON.stringify({ type: 'close_data_view', data: name }))
     },
     onLimitChange(limit) {
+      if (this.state.disconnected) return
       this.ws.send(JSON.stringify({ type: 'limit', data: limit }))
     }
   }
@@ -170,9 +201,20 @@ export default {
 .container {
   text-align: left;
   height: calc(100vh - 30px);
+  display: flex;
+  flex-direction: column;
+
+  .instance-bar {
+    padding: 4px 8px;
+    color: #FFFFFF;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
 
   .content {
-    height: 100%;
+    flex: 1;
+    min-height: 0;
   }
 
   .message {

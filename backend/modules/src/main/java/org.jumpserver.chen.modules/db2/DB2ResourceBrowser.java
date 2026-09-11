@@ -24,25 +24,24 @@ public class DB2ResourceBrowser extends BaseResourceBrowser {
         return this.getSchemas(SQL.of(SQL_GET_SCHEMAS));
     }
 
-    private static final String SQL_GET_TABLES = "select TABNAME from syscat.TABLES where TABSCHEMA = '?' and TYPE = 'T'";
+    private static final String SQL_GET_TABLES = "select TABNAME from syscat.TABLES where TABSCHEMA = ? and TYPE = 'T'";
 
     @Override
     public List<Table> getTables(String schema) throws SQLException {
-        return this.getTables(SQL.of(SQL_GET_TABLES, schema));
+        return this.getTables(SQL.bound(SQL_GET_TABLES, schema));
     }
 
-    private static final String SQL_GET_VIEWS = "select TABNAME from syscat.TABLES where TABSCHEMA = '?' and TYPE = 'V'";
+    private static final String SQL_GET_VIEWS = "select TABNAME from syscat.TABLES where TABSCHEMA = ? and TYPE = 'V'";
 
     @Override
     public List<View> getViews(String schema) throws SQLException {
-        return this.getViews(SQL.of(SQL_GET_VIEWS, schema));
+        return this.getViews(SQL.bound(SQL_GET_VIEWS, schema));
     }
 
-    private static final String SQL_GET_FIELDS = "select COLNAME, TYPENAME, LENGTH, DEFAULT, REMARKS from syscat.COLUMNS where TABSCHEMA = '?' and TABNAME = '?'";
 
     @Override
     public List<Field> getFields(String schema, String table) throws SQLException {
-        return this.getFields(SQL.of(SQL_GET_FIELDS, schema, table));
+        return this.getColumnMetadata(schema, table);
     }
 
 
