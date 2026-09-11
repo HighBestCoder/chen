@@ -18,6 +18,9 @@ for name in ca wrong-ca; do
   openssl req -x509 -newkey rsa:2048 -nodes -keyout "$fixture_dir/$name.key" -out "$fixture_dir/$name.crt" -days 2 -subj "/CN=$name" > /dev/null 2>&1
 done
 printf '%s\n' 'subjectAltName=DNS:pg.fixture,DNS:mysql.fixture,DNS:mongo.fixture,DNS:sql.fixture,DNS:ghost.fixture' 'extendedKeyUsage=serverAuth,clientAuth' > "$fixture_dir/server.ext"
+if [[ "${CHEN_INTEGRATION_MAIN:-}" == TestU08SrvIntegration ]]; then
+  sed -i 's/DNS:ghost.fixture/DNS:ghost.fixture,DNS:mongo.mongocluster.cosmos.azure.com/' "$fixture_dir/server.ext"
+fi
 printf '%s\n' 'extendedKeyUsage=clientAuth' > "$fixture_dir/client.ext"
 for name in server client; do
   cn=$name

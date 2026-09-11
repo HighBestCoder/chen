@@ -54,13 +54,26 @@ public class MongoConnectionManager implements ConnectionManager {
     private MongoClientSettings buildSettings() {
         boolean oidc = MongoEntraAuthSupport.isOidcMode(this.connectInfo);
         String host = this.connectInfo.getHost();
+        boolean documentDb = MongoAzureEndpoint.isDocumentDb(host);
+        boolean azureMongo = MongoAzureEndpoint.isAzureMongo(host);
+        if (documentDb && this.connectInfo.getProxyHost() != null) {
+            throw new IllegalArgumentException("DocumentDB SRV requires direct or private-network access; a fixed-port gateway cannot route SRV targets");
+        }
         Integer port = this.connectInfo.getProxyPort() != null ? this.connectInfo.getProxyPort() : this.connectInfo.getPort();
         if (host == null || host.isBlank() || port == null || port < 1 || port > 65535)
             throw new IllegalArgumentException("Invalid Mongo host or port");
         MongoClientSettings.Builder builder = MongoClientSettings.builder()
-                .applyToClusterSettings(cluster -> cluster.hosts(java.util.List.of(new com.mongodb.ServerAddress(host, port))))
                 .applyToSocketSettings(socket -> socket.connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS).readTimeout(120, java.util.concurrent.TimeUnit.MINUTES))
                 .applyToClusterSettings(cluster -> cluster.serverSelectionTimeout(10, java.util.concurrent.TimeUnit.SECONDS));
+        if (documentDb) {
+            builder.applyToClusterSettings(cluster -> cluster.srvHost(host));
+        } else {
+            builder.applyToClusterSettings(cluster -> cluster.hosts(java.util.List.of(new com.mongodb.ServerAddress(host, port))));
+        }
+        if (azureMongo) {
+            builder.retryWrites(false);
+            builder.applyToConnectionPoolSettings(pool -> pool.maxConnectionIdleTime(120, java.util.concurrent.TimeUnit.SECONDS));
+        }
         if (this.connectInfo.getProxyHost() != null) {
             String proxy = this.connectInfo.getProxyHost();
             builder.inetAddressResolver(name -> java.util.List.of(java.net.InetAddress.getByAddress(name, java.net.InetAddress.getByName(proxy).getAddress())));
@@ -114,7 +127,7 @@ public class MongoConnectionManager implements ConnectionManager {
                     .enabled(true)
                     .invalidHostNameAllowed(!verify)
                     .context(sslContext));
-        } else if (oidc) {
+        } else if (oidc || azureMongo) {
             // Cosmos vCore mandates TLS for the OIDC handshake; enforce it
             // with the JVM default trust store even if useSsl was unset.
             builder.applyToSslSettings(ssl -> ssl
