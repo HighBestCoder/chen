@@ -173,7 +173,7 @@ public class DataView extends SQLResult {
             }
             Object obj = i < row.size() ? row.get(i) : null;
             if (obj == null) {
-                writer.write("NULL");
+                writer.write("");
             } else if (obj instanceof Date) {
                 SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
                 writeString(writer, fmt.format(obj));
@@ -256,6 +256,7 @@ public class DataView extends SQLResult {
                 command.setOutput(String.format("%d rows exported", written[0]));
             }
             writer.flush();
+            if (!session.canDownload()) throw new SQLException("Export denied: authorization changed during export");
 
         } catch (IOException | SQLException | RuntimeException e) {
             command.setError(e.getMessage());
@@ -325,7 +326,7 @@ public class DataView extends SQLResult {
                 Field field = fields.get(i);
                 Object obj = row.get(field.getName());
                 if (obj == null) {
-                    writer.write("NULL");
+                    writer.write("");
                 } else if (obj instanceof Date) {
                     SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
                     writeString(writer, fmt.format(obj));

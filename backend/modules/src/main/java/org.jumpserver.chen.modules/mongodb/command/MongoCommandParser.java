@@ -39,6 +39,8 @@ public class MongoCommandParser {
                     + " / drop / show dbs / show collections / use <db> / JavaScript statements";
 
     public MongoCommand parse(String input) {
+        if (input != null && input.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 256 * 1024)
+            throw new MongoCommandException("Command exceeds 256 KiB UTF-8; reduce the command size");
         String text = input == null ? "" : input.trim();
         if (text.endsWith(";")) {
             text = text.substring(0, text.length() - 1).trim();

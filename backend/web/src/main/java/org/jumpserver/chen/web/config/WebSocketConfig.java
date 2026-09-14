@@ -23,6 +23,14 @@ public class WebSocketConfig implements WebSocketConfigurer {
         return new ConsoleWebSocketHandler();
     }
 
+    @org.springframework.context.annotation.Bean
+    public org.springframework.web.socket.server.standard.ServletServerContainerFactoryBean webSocketContainer() {
+        var container = new org.springframework.web.socket.server.standard.ServletServerContainerFactoryBean();
+        // JSON escaping can expand a 256 KiB command to six times its byte length.
+        container.setMaxTextMessageBufferSize(2 * 1024 * 1024);
+        return container;
+    }
+
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         registry

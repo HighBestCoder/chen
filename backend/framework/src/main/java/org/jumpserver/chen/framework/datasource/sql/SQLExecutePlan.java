@@ -106,6 +106,9 @@ public class SQLExecutePlan {
             if (hasWrites(selectStatement)) return; // Display limits must never change writes.
             int manualLimit = PageUtils.getLimit(this.targetSQL, this.druidDbType);
             if (manualLimit > -1) {
+                if (manualLimit > policy.getMaxRows()) {
+                    throw new SQLException("Manual query limit exceeds maxRows (" + policy.getMaxRows() + "). Reduce the explicit limit.");
+                }
                 this.manualLimitDetected = true;
                 this.queryLimit = manualLimit;
                 this.limitSource = "manual";

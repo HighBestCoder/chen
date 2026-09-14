@@ -96,3 +96,8 @@ docker run --rm --network "$network" -e CHEN_INTEGRATION_MAIN="${CHEN_INTEGRATIO
     probe_cp="backend/web/target/test-classes:backend/web/target/classes:backend/modules/target/test-classes:backend/modules/target/classes:backend/framework/target/classes:backend/wisp/target/classes:$(cat backend/web/target/cp-phase2.txt)"
     timeout 240 java -Dlogback.configurationFile=/fixtures/logback.xml -Djavax.net.ssl.trustStore=/fixtures/trust.jks -Djavax.net.ssl.trustStorePassword=fixturepass -cp "$probe_cp" "$CHEN_INTEGRATION_MAIN"
   '
+
+# Optional developer-only follow-up using this run's isolated network/certificates.
+if [[ -n "${CHEN_INTEGRATION_HOOK:-}" ]]; then
+  bash "$CHEN_INTEGRATION_HOOK" "$network" "$fixture_dir"
+fi

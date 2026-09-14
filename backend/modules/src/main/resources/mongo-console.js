@@ -13,6 +13,7 @@ ObjectId.prototype.toString = function () { return this.$oid; };
 ObjectId.prototype.toHexString = ObjectId.prototype.toString;
 function NumberLong(value) {
   if (!(this instanceof NumberLong)) return new NumberLong(value);
+  if (typeof value === 'number' && !Number.isSafeInteger(value)) throw Error('NumberLong requires a string or BigInt for integers outside the safe numeric range');
   this.$numberLong = String(value);
 }
 NumberLong.prototype.toString = function () { return this.$numberLong; };

@@ -21,7 +21,8 @@ public class WebExceptionResolver implements HandlerExceptionResolver {
         }
         boolean denied = org.jumpserver.chen.framework.datasource.error.SqlPermissionErrorClassifier.isPermissionDenied(ex)
                 || org.jumpserver.chen.modules.mongodb.MongoPermissionErrorClassifier.isPermissionDenied(ex);
-        response.setStatus(denied ? 403 : 500);
+        response.setStatus(ex instanceof org.jumpserver.chen.web.exception.ConnectionRejectedException rejected
+                ? rejected.getStatus() : denied ? 403 : 500);
         response.setContentType("text/plain;charset=UTF-8");
         try {
             response.getWriter().write(denied ? org.jumpserver.chen.framework.i18n.MessageUtils.get("msg.error.no_operation_permission")

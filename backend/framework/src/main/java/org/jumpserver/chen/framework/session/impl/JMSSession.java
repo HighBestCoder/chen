@@ -58,7 +58,20 @@ public class JMSSession extends BaseSession {
     private volatile boolean locked = false;
 
     private boolean canUpload = false;
-    private boolean canDownload = false;
+    private volatile boolean canDownload = false;
+    @Setter private java.util.function.BooleanSupplier authorizationCheck;
+    private volatile boolean authorizationDenied;
+
+    private boolean validateAuthorization() {
+        if (authorizationDenied) return false;
+        if (authorizationCheck == null) return true; // Compatibility with older Core.
+        try { this.canDownload = authorizationCheck.getAsBoolean(); return true; }
+        catch (RuntimeException failure) {
+            authorizationDenied = true;
+            this.canDownload = false;
+            return false;
+        }
+    }
 
     private boolean canCopy = false;
     private boolean canPaste = false;
@@ -110,7 +123,7 @@ public class JMSSession extends BaseSession {
         long now = System.currentTimeMillis();
         long start = this.jmsSession.getDateStart() * 1000;
         long last = this.lastActiveTime > 0 ? this.lastActiveTime : start;
-        return !isClosed() && !locked && now < this.expireTime * 1000
+        return !isClosed() && !locked && !authorizationDenied && now < this.expireTime * 1000
                 && now - start < (long) this.maxSessionTime * 3600000
                 && now - last < this.maxIdleTimeDelta * 60000;
     }
@@ -130,7 +143,7 @@ public class JMSSession extends BaseSession {
         return checkACLBatch(command, java.util.List.of(), connection);
     }
 
-    public boolean allowsExecution() { return isActive() && allowsCredentialRenewal(); }
+    public boolean allowsExecution() { return isActive() && allowsCredentialRenewal() && validateAuthorization(); }
 
     @Override
     public ACLResult checkACLBatch(String command, java.util.List<String> statements, Connection connection) {
@@ -162,7 +175,7 @@ public class JMSSession extends BaseSession {
 
     @Override
     public boolean canDownload() {
-        return this.canDownload;
+        return allowsExecution() && this.canDownload;
     }
 
     @Override

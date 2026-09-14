@@ -28,9 +28,14 @@ public class JmsSessionService implements SessionService {
 
     public Session createNewSession(String token, String remoteAddr) {
 
-        if (token == null || token.startsWith("entra-session:"))
+        if (token == null || (token.startsWith("entra-session:") || token.startsWith("chen-session-check:")))
             throw new IllegalArgumentException("A new login token is required");
         var tokenResp = this.getTokenResponse(token);
+        if (tokenResp.getData().getGatewaysCount() > 0
+                && "mongodb".equalsIgnoreCase(selectedProtocol(tokenResp).getName())
+                && org.jumpserver.chen.modules.mongodb.MongoAzureEndpoint.isDocumentDb(tokenResp.getData().getAsset().getAddress()))
+            throw new org.jumpserver.chen.web.exception.ConnectionRejectedException(
+                    "DocumentDB SRV requires direct or private-network access; a fixed-port gateway cannot route SRV targets", 400);
         var jmsSession = this.createJMSSession(tokenResp, remoteAddr);
         Datasource datasource = null;
         JMSSession session = null;
@@ -38,6 +43,7 @@ public class JmsSessionService implements SessionService {
             datasource = this.createDatasource(tokenResp, jmsSession.getId());
             session = new JMSSession(jmsSession, datasource, remoteAddr, this.serviceBlockingStub, tokenResp);
             installTokenProvider(tokenResp, session, datasource);
+            installAuthorizationCheck(tokenResp, session);
             this.handleGateways(tokenResp, session, datasource);
             return session;
         } catch (RuntimeException failure) {
@@ -58,6 +64,23 @@ public class JmsSessionService implements SessionService {
         return response.getData().getPlatform().getProtocolsList().stream()
                 .filter(p -> p.getName().equalsIgnoreCase(protocol)).findFirst()
                 .map(Common.PlatformProtocol::getSettingsMap).orElse(java.util.Map.of());
+    }
+
+    private void installAuthorizationCheck(ServiceOuterClass.TokenResponse original, JMSSession session) {
+        var settings = authSettings(original);
+        String id = settings.getOrDefault("chen_session_id", "");
+        if (id.isBlank()) return;
+        if (!id.equals(session.getJmsSession().getId())) throw new IllegalStateException("Authorization session binding mismatch");
+        session.setAuthorizationCheck(() -> {
+            var checked = getTokenResponse("chen-session-check:" + id);
+            var matches = checked.getData().getPlatform().getProtocolsList().stream()
+                    .filter(p -> p.getName().equalsIgnoreCase(selectedProtocol(original).getName())).toList();
+            if (matches.size() != 1) throw new IllegalStateException("Authorization check unavailable");
+            var next = matches.get(0).getSettingsMap();
+            if (!id.equals(next.get("chen_session_id")) || !"true".equals(next.get("chen_session_valid")))
+                throw new IllegalStateException("Session authorization revoked");
+            return "true".equals(next.get("chen_download_allowed"));
+        });
     }
 
     private void installTokenProvider(ServiceOuterClass.TokenResponse original, JMSSession session, Datasource datasource) {
@@ -286,7 +309,7 @@ public class JmsSessionService implements SessionService {
     }
 
     private Common.Session createJMSSession(ServiceOuterClass.TokenResponse tokenResp, String remoteAddr) {
-        String renewalSessionId = authSettings(tokenResp).getOrDefault("entra_session_id", "");
+        String renewalSessionId = authSettings(tokenResp).getOrDefault("chen_session_id", authSettings(tokenResp).getOrDefault("entra_session_id", ""));
         if (!renewalSessionId.isBlank()) java.util.UUID.fromString(renewalSessionId);
         var jmsSession = Common.Session.newBuilder()
                 .setId(renewalSessionId)

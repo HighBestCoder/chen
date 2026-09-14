@@ -11,7 +11,7 @@ function load(file, extra = {}) {
     InstanceDialog: {}, CodeEditor: {}, ResultBar: {}, DataView: {}, Log: {}, Message: {}, SplitPane: {}, format: x => x, formatMongoCommand: x => x,
     VueCookie: { get: () => '' }, commandModuleForDb: x => x, commandCommentForDb: () => '', looksSensitiveCommand: () => false,
     WebSocket: class { send() {} close() {} }, document: { location: { protocol: "http:" } }, window: { location: { host: "test" } },
-    setTimeout, clearTimeout, setInterval, clearInterval, ...extra }
+    TextEncoder, setTimeout, clearTimeout, setInterval, clearInterval, ...extra }
   vm.runInNewContext(text, sandbox); return sandbox.module.exports
 }
 function mount(c, props = {}) {
@@ -25,6 +25,19 @@ const failures=[]; let count=0
 async function test(name, fn) {try {await fn();count++;console.log('PASS '+name)}catch(e){failures.push(name+': '+e.message)}}
 const flush = () => new Promise(resolve => setImmediate(resolve))
 async function main() {
+  await test('DEF-15 immediate double run sends one request', () => {
+    const c=load('components/Main/Explore/QueryConsole/CodeEditor.vue');const sent=[]
+    const ctx=mount(c,{state:{inQuery:false},$emit:(...x)=>sent.push(x)});ctx.statement='SELECT 1'
+    ctx.onRun();ctx.onRun();assert.equal(sent.length,1)
+  })
+  await test('DEF-11 export uses selection captured before dialog blur', () => {
+    const c=load('components/Main/Explore/DataView/DataView.vue');const sent=[]
+    let ranges=[{from:{row:0},to:{row:9}}]
+    const ctx=mount(c,{data:{revision:7,data:Array.from({length:20},(_,x)=>({x}))},$emit:(...x)=>sent.push(x),
+      $refs:{hostTable:{hotInstance:{getSelectedRange:()=>ranges,toPhysicalRow:x=>x}}}})
+    ctx.onExport();ranges=[];ctx.onExportSubmit('selected')
+    assert.equal(sent[0][1].data.rowIndices.length,10);assert.equal(sent[0][1].data.revision,7)
+  })
   await test('result close packet accepts primitive strings and unmount releases subscriptions', () => {
     const c=load('components/Main/Explore/QueryConsole/ResultBar.vue')
     const subjects=Object.fromEntries(['newResultSubject','updateResultSubject','deleteResultSubject','stateSubject'].map(x=>[x,new Subject()]))
@@ -110,7 +123,7 @@ async function main() {
   await test('selected export sends deduplicated physical indices, not mutable values', () => {
     const c=load('components/Main/Explore/DataView/DataView.vue');const emitted=[]
     const ctx=mount(c,{data:{fields:[],data:[{x:'first'},{x:'second'}]},$emit:(...a)=>emitted.push(a),$refs:{hostTable:{hotInstance:{getSelectedRange:()=>[{from:{row:0},to:{row:1}}],toPhysicalRow:r=>1-r}}}})
-    ctx.onExportSubmit('selected');assert.equal(JSON.stringify(emitted[0][1].data.rowIndices),'[1,0]')
+    ctx.onExport();ctx.onExportSubmit('selected');assert.equal(JSON.stringify(emitted[0][1].data.rowIndices),'[1,0]')
   })
   await test('URL parameters preserve encoded credentials, equals and exclude fragments', () => {
     const text=fs.readFileSync(path.join(__dirname,'src/utils/field.js'),'utf8').replace(/export function/g,'function')

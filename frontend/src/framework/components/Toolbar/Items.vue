@@ -26,7 +26,7 @@
           :icon="getValue(item,'icon')"
           :style="getValue(item,'style')"
           class="toolbar-btn iconfont"
-          @click="item.onClick(item)"
+          @click="item.onClick(item, $event)"
         >
           {{ item.name && item.name() }}
         </el-button>

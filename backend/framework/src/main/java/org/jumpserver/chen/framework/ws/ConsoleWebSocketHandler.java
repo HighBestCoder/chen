@@ -30,6 +30,7 @@ public class ConsoleWebSocketHandler extends TextWebSocketHandler {
         final ArrayDeque<Runnable> tasks = new ArrayDeque<>();
         boolean running;
     }
+    private final java.util.Set<String> executingSockets = ConcurrentHashMap.newKeySet();
     private final ConcurrentHashMap<String, Queue> queues = new ConcurrentHashMap<>();
 
     // Database context belongs to a Session's datasource, so serialize all its
@@ -95,12 +96,31 @@ public class ConsoleWebSocketHandler extends TextWebSocketHandler {
             return;
         }
 
+        if ("query_console_action".equals(packet.getType()) && packet.getData() != null) {
+            var action = JSON.parseObject(JSON.toJSONString(packet.getData()));
+            if ("run_sql".equals(action.getString("action")) && action.getString("data") != null
+                    && action.getString("data").getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 256 * 1024) {
+                new org.jumpserver.chen.framework.ws.io.PacketIO(socket).sendPacket("message",
+                        org.jumpserver.chen.framework.console.entity.response.Message.error("Command too large", "Maximum command size is 256 KiB UTF-8."));
+                return;
+            }
+        }
         if (cancel) {
             // Cancellation must not wait behind the query it needs to stop.
             dispatch(socket, token, packet, true);
         } else {
-            try { enqueue(token, () -> dispatch(socket, token, packet, false)); }
-            catch (RuntimeException e) { socket.close(CloseStatus.POLICY_VIOLATION); }
+            var action = "query_console_action".equals(packet.getType()) && packet.getData() != null
+                    ? JSON.parseObject(JSON.toJSONString(packet.getData())).getString("action") : "";
+            boolean execution = "run_sql".equals(action) || "run_sql_file".equals(action);
+            if (execution && !executingSockets.add(socket.getId())) return;
+            try { enqueue(token, () -> {
+                try { dispatch(socket, token, packet, false); }
+                finally { if (execution) executingSockets.remove(socket.getId()); }
+            }); }
+            catch (RuntimeException e) {
+                if (execution) executingSockets.remove(socket.getId());
+                socket.close(CloseStatus.POLICY_VIOLATION);
+            }
         }
     }
 

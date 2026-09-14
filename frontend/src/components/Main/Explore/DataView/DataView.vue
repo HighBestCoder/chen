@@ -81,7 +81,7 @@ export default {
             return !this.state.manualLimitDetected
           },
           value: () => {
-            return '共 ' + this.$t('common.num_row', { num: this.state.total }) + this.dataSizeSuffix()
+            return (this.state.total < 0 ? this.$t('common.total_unknown') : this.$t('common.num_row', { num: this.state.total })) + this.dataSizeSuffix()
           }
         },
         pagination: {
@@ -157,6 +157,7 @@ export default {
       },
       hotSettings: {
         contextMenu: false,
+        outsideClickDeselects: false,
         selectionMode: 'multiple',
         // multiColumnSorting: true,
         rowHeaders: true,
@@ -249,6 +250,12 @@ export default {
           // A BSON field/SQL alias may literally contain dots. String accessors
           // are treated as nested paths by Handsontable and lose such values.
           data: row => row[item.name],
+          renderer: (instance, td, row, col, prop, value) => {
+            td.textContent = value == null ? 'NULL' : String(value)
+            td.classList.toggle('chen-null', value == null)
+            if (value == null) td.title = 'SQL NULL / missing value'
+            else td.removeAttribute('title')
+          },
           type: 'text',
           readOnly: true
         }
@@ -277,12 +284,13 @@ export default {
       this.$emit('action', { action: 'refresh' })
     },
     onExport() {
+      this.exportSelection = { rowIndices: this.getSelectedRowIndices(), revision: this.data.revision }
       this.exportDataDialogVisible = true
     },
     onExportSubmit(scope) {
       this.exportDataDialogVisible = false
       if (scope === 'selected') {
-        this.$emit('action', { action: 'export', data: { scope, rowIndices: this.getSelectedRowIndices(), revision: this.data.revision }})
+        this.$emit('action', { action: 'export', data: { scope, ...this.exportSelection }})
         return
       }
       this.$emit('action', { action: 'export', data: scope })

@@ -84,6 +84,11 @@ export default {
       }
       this.$store.dispatch('app/auth', params).then((token) => {
         this.initWs(token)
+      }).catch((error) => {
+        const detail = error.response && error.response.data
+        this.dialogOptions = { title: 'Connection failed', showClose: false, bodyType: 'text',
+          body: typeof detail === 'string' && detail ? detail : 'Unable to authenticate or connect. Check the account, authorization and network settings, then reconnect.' }
+        this.dialogVisible = true
       })
     },
     initWs(token) {

@@ -25,12 +25,16 @@ public final class SqlText {
             parser.parseStatementList(parsed, 1);
             if (parsed.isEmpty()) break;
             int end;
-            if (lexer.token() == Token.SEMI) end = protectedSql.originalPosition(lexer.pos() - 1);
+            if (lexer.token() == Token.SEMI) end = protectedSql.originalPosition(lexer.pos());
             else if (lexer.token() == Token.EOF) end = sql.length();
             else throw new ParserException("Separate SQL statements with semicolons");
-            String text = sql.substring(start, end).strip();
+            String text = sql.substring(start, end);
             if (!text.isEmpty()) result.add(text);
-            start = lexer.token() == Token.SEMI ? end + 1 : end;
+            start = end;
+        }
+        if (start < sql.length() && !result.isEmpty()) {
+            int last = result.size() - 1;
+            result.set(last, result.get(last) + sql.substring(start));
         }
         return result;
     }

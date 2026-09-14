@@ -18,7 +18,7 @@ public final class MongoScriptRunner {
     private static final ScheduledExecutorService DEADLINES=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"mongo-script-deadlines");t.setDaemon(true);return t;});
     private static final JsonWriterSettings EXTENDED=JsonWriterSettings.builder().outputMode(JsonMode.EXTENDED).build();
     public static Document evaluate(String script,String database,long timeoutMs,BiFunction<String,String,String> execute) {
-        if(script.length()>256*1024)throw new MongoCommandException("Script exceeds 256 KiB");
+        if(script.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>256*1024)throw new MongoCommandException("Script exceeds 256 KiB");
         if(!SLOTS.tryAcquire())throw new MongoCommandException("Script workers are busy; retry later");
         Process process=null;ScheduledFuture<?> deadline=null;Path temporary=null;
         try {

@@ -1,6 +1,6 @@
 <template>
   <el-alert
-    v-show="opened"
+    v-if="opened"
     :description="message"
     :title="title"
     :type="type"

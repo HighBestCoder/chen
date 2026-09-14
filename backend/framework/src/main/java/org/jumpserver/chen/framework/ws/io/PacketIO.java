@@ -20,6 +20,14 @@ public class PacketIO {
     }
 
     public void sendPacket(Packet packet) {
+        if ("update_data_view".equals(packet.getType()) || "new_data_view".equals(packet.getType())) {
+            var session = org.jumpserver.chen.framework.session.SessionManager.getCurrentSession();
+            if (session instanceof org.jumpserver.chen.framework.session.impl.JMSSession jms && !jms.allowsExecution()) {
+                sendPacket("message", org.jumpserver.chen.framework.console.entity.response.Message.error(
+                        "Operation denied", "Session authorization is no longer valid; reconnect."));
+                return;
+            }
+        }
         synchronized (this.wsSession) {
             try {
                 String json = JSON.toJSONStringWithDateFormat(packet, "yyyy-MM-dd HH:mm:ss");

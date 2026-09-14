@@ -165,9 +165,9 @@ public class QueryConsole extends AbstractConsole {
 
 
             case QueryConsoleAction.ACTION_CANCEL -> {
+                // Cancellation is a request; only the execution finally block
+                // confirms completion and re-enables Run.
                 this.onCancel();
-                this.getState().setInQuery(false);
-                this.stateManager.commit();
             }
             case QueryConsoleAction.ACTION_CHANGE_CURRENT_CONTEXT -> {
                 var schema = (String) action.getData();
@@ -404,7 +404,11 @@ public class QueryConsole extends AbstractConsole {
             this.stateManager.commit();
 
             try {
-                plan.generateTargetSQL();
+                try { plan.generateTargetSQL(); }
+                catch (SQLException | ParserException failure) {
+                    recordPreExecutionFailure(plan.getSourceSQL(), plan.getAclResult(), failure);
+                    throw failure;
+                }
                 this.getConsoleLogger().info("execute sql: %s", plan.getTargetSQL());
                 var result = plan.executeWithAudit();
                 this.getConsoleLogger().success(result);

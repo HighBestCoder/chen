@@ -35,6 +35,7 @@ public final class SqlExecutionStatsBuilder {
      */
     public static ExecutionStats fromSuccess(Datasource datasource, String command, SQLQueryResult result) {
         ExecutionStats stats = baseStats(datasource, command);
+        stats.putExtra("size_measurement", "utf8_values_v1");
         stats.setSuccess(Boolean.TRUE);
 
         if (result == null) {

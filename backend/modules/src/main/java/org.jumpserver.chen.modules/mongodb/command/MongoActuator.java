@@ -251,9 +251,8 @@ public class MongoActuator {
         boolean writesCollection = command.writesCollection();
         if (!writesCollection && (command.getLimit() != null || !hasLimitStage(pipeline))) {
             int resolved = resolveLimit(command.getLimit(), limit);
-            boolean safetyBound = command.getLimit() == null ? limit < 0
-                    : command.getLimit() == 0 || command.getLimit() > resolved;
-            pipeline.add(new Document(LIMIT_STAGE, resolved + (safetyBound ? 1 : 0)));
+            boolean boundedByUser = command.getLimit() != null && command.getLimit() > 0 && command.getLimit() <= resolved;
+            pipeline.add(new Document(LIMIT_STAGE, resolved + (boundedByUser ? 0 : 1)));
         }
 
         AggregateIterable<Document> iterable = collection.aggregate(pipeline);
@@ -268,7 +267,7 @@ public class MongoActuator {
         // An earlier $limit does not bound the output of later $unwind/$unionWith.
         // Bound retained results independently, without rewriting terminal writes.
         int cap = command.getLimit() != null ? resolveLimit(command.getLimit(), limit)
-                : limit < 0 ? EXPORT_MAX : MAX_LIMIT;
+                : hasLimitStage(command.getPipeline()) ? (limit < 0 ? EXPORT_MAX : MAX_LIMIT) : resolveLimit(null, limit);
         try (MongoCursor<Document> cursor = iterable.iterator()) {
             while (documents.size() < cap && cursor.hasNext()) {
                 documents.add(cursor.next());
@@ -281,7 +280,7 @@ public class MongoActuator {
         // always reported as a complete (non-paged) set of what the pipeline
         // produced rather than inventing a page count.
         SQLQueryResult result = this.adapter.toResult(command.getRawText(), command.getCollection(), documents,
-                null, start, queryDone, documents.size(), false);
+                null, start, queryDone, truncated ? -1 : documents.size(), false);
         result.setManualLimitDetected(command.getLimit() != null || hasLimitStage(command.getPipeline()));
         result.setTruncated(truncated);
         return result;

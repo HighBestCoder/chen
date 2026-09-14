@@ -23,6 +23,12 @@ public class TestMongoS05Integration extends TestConnectionTlsIntegration {
             List<Document> docs = new ArrayList<>();
             for (int i=0;i<1500;i++) docs.add(new Document("_id",i).append("n",i));
             c.insertMany(docs);
+            test("DEF-05 aggregate toolbar truncation never invents total", () -> {
+                var r=a.execute(p.parse("db.items.aggregate([{$match:{_id:{$lt:250}}}])"),0,50);
+                require(r.getData().size()==50 && r.isTruncated() && r.getTotal()==-1,"false aggregate total");
+                r=a.execute(p.parse("db.items.aggregate([{$match:{_id:{$lt:250}}}])"),0,500);
+                require(r.getData().size()==250 && !r.isTruncated() && r.getTotal()==250,"complete aggregate total");
+            });
             test("find sort/projection and second page", () -> {
                 var r = a.execute(p.parse("db.items.find({}, {_id:0,n:1}).sort({n:-1})"),5,5);
                 require(r.getData().equals(List.of(List.of(1494),List.of(1493),List.of(1492),List.of(1491),List.of(1490))),"wrong rows");

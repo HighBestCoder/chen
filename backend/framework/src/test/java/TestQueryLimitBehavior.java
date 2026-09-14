@@ -66,8 +66,8 @@ public class TestQueryLimitBehavior {
             report(type + " UNION records manual limit", union.isManualLimitDetected() && union.getQueryLimit() == 200,
                     200, union.getQueryLimit());
             String large = "SELECT * FROM users LIMIT 4294967295";
-            var big = plan(large, type, 50, "toolbar");
-            report(type + " large manual limit not overwritten", large.equals(big.getTargetSQL()), large, big.getTargetSQL());
+            try { plan(large, type, 50, "toolbar"); throw new AssertionError("oversized manual limit accepted"); }
+            catch (SQLException expected) { if (!expected.getMessage().contains("maxRows")) throw expected; }
         }
     }
 

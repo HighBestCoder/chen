@@ -15,16 +15,16 @@ public class TestConsoleOrdering {
     public static void main(String[] args) throws Exception {
         List<String> failures=new CopyOnWriteArrayList<>();
         CountDownLatch entered=new CountDownLatch(1), release=new CountDownLatch(1), second=new CountDownLatch(1), done=new CountDownLatch(1);
-        AtomicReference<String> database=new AtomicReference<>(); AtomicInteger cancels=new AtomicInteger(), creates=new AtomicInteger();
+        AtomicReference<String> database=new AtomicReference<>(); AtomicInteger cancels=new AtomicInteger(), creates=new AtomicInteger(), executions=new AtomicInteger();
         ConnectionManager manager=proxy(ConnectionManager.class,(p,m,a)->{if(m.getName().equals("setDatabaseContext"))database.set((String)a[0]);return null;});
         Console[] first={null};
         first[0]=proxy(Console.class,(p,m,a)-> {
             if(m.getName().equals("getNodeKey"))return "database:A";
             if(m.getName().equals("handle")) {
                 Packet packet=(Packet)a[0];
-                if(packet.getType().equals("query_console_action")){cancels.incrementAndGet();return null;}
+                if(packet.getType().equals("query_console_action") && com.alibaba.fastjson.JSON.toJSONString(packet.getData()).contains("cancel")){cancels.incrementAndGet();return null;}
                 if("tail".equals(packet.getType())){done.countDown();return null;}
-                entered.countDown();release.await(3,TimeUnit.SECONDS);
+                executions.incrementAndGet();entered.countDown();release.await(3,TimeUnit.SECONDS);
                 if(!"A".equals(database.get()))failures.add("database changed while query was active");
             }
             return null;
@@ -48,7 +48,8 @@ public class TestConsoleOrdering {
         }));
         var handler=new ConsoleWebSocketHandler();
         try {
-            handler.handleMessage(a.ws,new TextMessage("{\"type\":\"work\"}"));
+            handler.handleMessage(a.ws,new TextMessage("{\"type\":\"query_console_action\",\"data\":{\"action\":\"run_sql\",\"data\":\"SELECT 1\"}}"));
+            handler.handleMessage(a.ws,new TextMessage("{\"type\":\"query_console_action\",\"data\":{\"action\":\"run_sql\",\"data\":\"SELECT 1\"}}"));
             if(!entered.await(2,TimeUnit.SECONDS))throw new AssertionError("first query not started");
             handler.handleMessage(b.ws,new TextMessage("{\"type\":\"work\"}"));
             if(second.await(150,TimeUnit.MILLISECONDS))failures.add("concurrent console ran before first completed");
@@ -60,6 +61,7 @@ public class TestConsoleOrdering {
             handler.handleMessage(a.ws,new TextMessage("{\"type\":\"connect\",\"data\":{\"type\":\"query\",\"nodeKey\":\"database:A\"}}"));
             handler.handleMessage(a.ws,new TextMessage("{\"type\":\"tail\"}"));
             if(!done.await(2,TimeUnit.SECONDS))failures.add("tail message lost");
+            if(executions.get()!=1)failures.add("duplicate execution admitted while first running");
             if(creates.get()!=0)failures.add("duplicate connect recreated console");
             // Occupy all workers once: every reused worker must have a clean context.
             for(Field field:ConsoleWebSocketHandler.class.getDeclaredFields()) if(ExecutorService.class.isAssignableFrom(field.getType())) {

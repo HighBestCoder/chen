@@ -177,7 +177,7 @@ export default {
           loading: () => {
             return this.state.inQuery
           },
-          onClick: () => this.onRun()
+          onClick: (item, event) => { if (!event || event.detail < 2) this.onRun() }
         },
         stop: {
           split: true,
@@ -268,6 +268,11 @@ export default {
     onRun() {
       if (this.state.inQuery || this.state.disconnected) return
       const sql = this.selectionValue || this.statement
+      if (new TextEncoder().encode(sql).length > 256 * 1024) {
+        this.subjects.messageSubject.next({ title: 'Command too large', message: 'Maximum command size is 256 KiB UTF-8.', type: 'error' })
+        return
+      }
+      this.state.inQuery = true
       this.$emit('action', { action: 'run_sql', data: sql })
     },
     onStop() {

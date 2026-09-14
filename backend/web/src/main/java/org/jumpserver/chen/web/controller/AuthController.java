@@ -27,7 +27,14 @@ public class AuthController {
     @PostMapping("")
     public AuthResponse auth(HttpServletRequest request, @RequestBody AuthRequest authRequest) {
         String token = authRequest.getToken();
-        Session sess = sessionService.createNewSession(token, getRemoteAddr(request));
+        Session sess;
+        try { sess = sessionService.createNewSession(token, getRemoteAddr(request)); }
+        catch (org.jumpserver.chen.web.exception.ConnectionRejectedException expected) { throw expected; }
+        catch (RuntimeException failure) {
+            // Upstream exceptions can contain credentials. Never echo their text.
+            throw new org.jumpserver.chen.web.exception.ConnectionRejectedException(
+                    "Connection authentication failed. Check the account credentials, tenant, authorization and gateway/network settings, then reconnect.", 403);
+        }
 
         sess.setEnableAutoComplete(!authRequest.isDisableAutoHash());
 

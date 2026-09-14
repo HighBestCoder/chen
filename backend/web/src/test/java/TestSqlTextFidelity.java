@@ -30,13 +30,13 @@ public class TestSqlTextFidelity {
             String script=String.join("; ", originals)+";";
             try {
                 var split=org.jumpserver.chen.framework.utils.SqlText.statements(script,type);
-                if(!split.equals(originals))failures.add(type+" quoted/comment semicolon split: "+split);
+                if(!String.join("", split).equals(script) || split.size()!=3)failures.add(type+" quoted/comment semicolon split: "+split);
             }catch(Exception e){failures.add(type+" split: "+e.getMessage());}
         }
         try {
             String dollar="SELECT $tag$a; 'b'\\c$tag$ AS value";
             var split=org.jumpserver.chen.framework.utils.SqlText.statements(dollar+"; SELECT 2",DbType.postgresql);
-            if(!split.equals(List.of(dollar,"SELECT 2")))failures.add("dollar split changed");
+            if(!String.join("", split).equals(dollar+"; SELECT 2") || split.size()!=2)failures.add("dollar split changed");
             if(!PageUtils.limit(dollar,DbType.postgresql,0,1).contains("$tag$a; 'b'\\c$tag$"))failures.add("dollar literal changed");
         }catch(Exception e){failures.add("dollar: "+e.getMessage());}
         var commented=SqlScriptParser.parse("# mysql comment\nSELECT 1",DbType.mysql);
