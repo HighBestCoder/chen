@@ -32,6 +32,7 @@ public class TestStreamingStatsBuilder {
     public static void main(String[] args) {
         streamedPathUsesCarriedStats();
         legacyPathFallsBackToCompute();
+        materializedPathRecordsSingleTableFallbackMode();
 
         if (failures > 0) {
             System.err.println("FAIL: " + failures + " case(s) failed");
@@ -64,6 +65,7 @@ public class TestStreamingStatsBuilder {
         result.setStreamedSizeByColumn(streamedByColumn);
         result.setSizeStatsStatus("ok");
         result.setSizeByColumnSourceStatus("ok");
+        result.setSizeByColumnSourceMode("metadata_exact");
         result.setTruncated(true);
 
         ExecutionStats stats = SqlExecutionStatsBuilder.fromSuccess(null, "SELECT name, age FROM big", result);
@@ -81,6 +83,9 @@ public class TestStreamingStatsBuilder {
         report("size_by_column_source_status propagated",
                 "ok".equals(stats.getExtras().get("size_by_column_source_status")),
                 "ok", stats.getExtras().get("size_by_column_source_status"));
+        report("size_by_column_source_mode propagated",
+                "metadata_exact".equals(stats.getExtras().get("size_by_column_source_mode")),
+                "metadata_exact", stats.getExtras().get("size_by_column_source_mode"));
         report("result_truncated recorded",
                 Boolean.TRUE.equals(stats.getExtras().get("result_truncated")),
                 true, stats.getExtras().get("result_truncated"));
@@ -111,6 +116,28 @@ public class TestStreamingStatsBuilder {
                 eq(stats.getReturnedRows(), 2L), 2L, stats.getReturnedRows());
         report("legacy sizeBytes recomputed == 8",
                 eq(stats.getSizeBytes(), 8L), 8L, stats.getSizeBytes());
+        report("legacy source mode emitted",
+                "metadata_exact".equals(stats.getExtras().get("size_by_column_source_mode")),
+                "metadata_exact", stats.getExtras().get("size_by_column_source_mode"));
+    }
+
+    private static void materializedPathRecordsSingleTableFallbackMode() {
+        SQLQueryResult result = new SQLQueryResult("SELECT COUNT(*) AS cnt FROM t");
+        result.setHasResultSet(true);
+        Field field = new Field();
+        field.setName("cnt");
+        result.setFields(List.of(field));
+        result.setData(List.of(row(2)));
+        result.setTotal(1);
+
+        ExecutionStats stats = SqlExecutionStatsBuilder.fromSuccess(null, "SELECT COUNT(*) AS cnt FROM t", result);
+
+        report("materialized no metadata source partial",
+                "partial".equals(stats.getExtras().get("size_by_column_source_status")),
+                "partial", stats.getExtras().get("size_by_column_source_status"));
+        report("materialized no metadata source mode",
+                "sql_single_table_fallback".equals(stats.getExtras().get("size_by_column_source_mode")),
+                "sql_single_table_fallback", stats.getExtras().get("size_by_column_source_mode"));
     }
 
     private static boolean eq(Long actual, long expected) {
@@ -122,6 +149,7 @@ public class TestStreamingStatsBuilder {
         for (String n : names) {
             Field f = new Field();
             f.setName(n);
+            f.setSourceName(n);
             f.setTable("t");
             fs.add(f);
         }

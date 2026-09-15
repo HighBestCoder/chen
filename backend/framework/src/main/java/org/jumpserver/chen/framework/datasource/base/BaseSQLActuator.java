@@ -349,6 +349,7 @@ public abstract class BaseSQLActuator implements SQLActuator {
                 if (columnStatsOk) {
                     result.setStreamedSizeByColumn(sizeByColumn);
                     result.setSizeByColumnSourceStatus(columnKeys.getStatus());
+                    result.setSizeByColumnSourceMode(columnKeys.getSourceMode());
                     result.setSizeByColumnSourceUnavailableReason(columnKeys.getUnavailableReason());
                 } else {
                     result.setSizeByColumnSourceStatus(SizeCalculator.STATUS_UNAVAILABLE);

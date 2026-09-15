@@ -45,6 +45,7 @@ public class SQLQueryResult {
     private String sizeStatsStatus;
     private String sizeStatsUnavailableReason;
     private String sizeByColumnSourceStatus;
+    private String sizeByColumnSourceMode;
     private String sizeByColumnSourceUnavailableReason;
     private long trueReturnedRows = -1;
     private boolean truncated;

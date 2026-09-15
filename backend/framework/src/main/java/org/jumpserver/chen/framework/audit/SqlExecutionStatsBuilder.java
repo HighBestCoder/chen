@@ -102,6 +102,9 @@ public final class SqlExecutionStatsBuilder {
         if (result.getSizeByColumnSourceStatus() != null) {
             stats.putExtra("size_by_column_source_status", result.getSizeByColumnSourceStatus());
         }
+        if (result.getSizeByColumnSourceMode() != null) {
+            stats.putExtra("size_by_column_source_mode", result.getSizeByColumnSourceMode());
+        }
         if (result.getSizeByColumnSourceUnavailableReason() != null) {
             stats.putExtra("size_by_column_source_unavailable_reason",
                     result.getSizeByColumnSourceUnavailableReason());
@@ -125,6 +128,7 @@ public final class SqlExecutionStatsBuilder {
             }
             stats.putExtra("size_by_column_source_status",
                     result.isTruncated() ? SizeCalculator.STATUS_PARTIAL : keys.getStatus());
+            stats.putExtra("size_by_column_source_mode", keys.getSourceMode());
             if (result.isTruncated()) {
                 stats.putExtra("size_by_column_source_unavailable_reason", "materialized result truncated");
             } else if (keys.getUnavailableReason() != null) {
