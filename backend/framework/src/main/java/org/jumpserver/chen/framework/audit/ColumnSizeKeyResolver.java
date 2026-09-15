@@ -18,6 +18,9 @@ import java.util.regex.Pattern;
 public final class ColumnSizeKeyResolver {
 
     private static final String UNKNOWN_PREFIX = "unknown";
+    public static final String MODE_METADATA_EXACT = "metadata_exact";
+    public static final String MODE_SQL_SINGLE_TABLE_FALLBACK = "sql_single_table_fallback";
+    public static final String MODE_UNRESOLVED = "unresolved";
     private static final Pattern FROM_TABLE = Pattern.compile(
             "(?is)\\bfrom\\s+([`\\\"\\[]?[A-Za-z0-9_.$-]+[`\\\"\\]]?)");
     private static final Pattern JOIN_TABLE = Pattern.compile(
@@ -28,41 +31,57 @@ public final class ColumnSizeKeyResolver {
 
     public static ResolveResult resolve(String command, DbType dbType, List<Field> fields) {
         if (fields == null || fields.isEmpty()) {
-            return new ResolveResult(List.of(), SizeCalculator.STATUS_OK, null);
+            return new ResolveResult(List.of(), SizeCalculator.STATUS_OK, MODE_METADATA_EXACT, null);
         }
 
         SourceInfo sourceInfo = SourceInfo.from(command);
         List<String> keys = new ArrayList<>(fields.size());
         boolean partial = false;
         String reason = null;
+        String mode = MODE_METADATA_EXACT;
 
         for (Field field : fields) {
-            String column = emptyToFallback(field == null ? null : field.getName(), "column");
+            String label = emptyToFallback(field == null ? null : field.getName(), "column");
+            String sourceName = field == null ? null : field.getSourceName();
+            String column = emptyToFallback(sourceName, label);
             String table = field == null || field.getTable() == null ? "" : field.getTable();
             if (!table.isEmpty()) {
                 keys.add(table + "." + column);
+                if (sourceName == null || sourceName.trim().isEmpty()) {
+                    partial = true;
+                    mode = MODE_UNRESOLVED;
+                    reason = "driver did not provide source column";
+                }
                 continue;
             }
 
-            String fallbackPrefix = sourceInfo.prefix();
-            if (fallbackPrefix == null || fallbackPrefix.isEmpty()) {
-                fallbackPrefix = UNKNOWN_PREFIX;
-                partial = true;
-                reason = "source table parse failed";
-            } else if (sourceInfo.partial()) {
-                partial = true;
-                reason = "source table parse partial";
+            partial = true;
+            if (sourceInfo.singleTable()) {
+                keys.add(sourceInfo.baseTable + "." + label);
+                if (MODE_METADATA_EXACT.equals(mode)) {
+                    mode = MODE_SQL_SINGLE_TABLE_FALLBACK;
+                }
+                if (reason == null) {
+                    reason = "driver did not provide source table; single SQL source used";
+                }
+            } else {
+                keys.add(UNKNOWN_PREFIX + "." + label);
+                mode = MODE_UNRESOLVED;
+                reason = sourceInfo.baseTable == null || sourceInfo.baseTable.isEmpty()
+                        ? "source table parse failed"
+                        : "driver did not provide source table and SQL source is ambiguous";
             }
-            keys.add(fallbackPrefix + "." + column);
         }
 
         return new ResolveResult(keys,
                 partial ? SizeCalculator.STATUS_PARTIAL : SizeCalculator.STATUS_OK,
+                mode,
                 reason);
     }
 
     public static String keyForField(Field field) {
-        String column = emptyToFallback(field == null ? null : field.getName(), "column");
+        String column = emptyToFallback(field == null ? null : field.getSourceName(),
+                emptyToFallback(field == null ? null : field.getName(), "column"));
         String table = field == null || field.getTable() == null ? "" : field.getTable();
         if (table.isEmpty()) {
             table = UNKNOWN_PREFIX;
@@ -95,11 +114,13 @@ public final class ColumnSizeKeyResolver {
     public static final class ResolveResult {
         private final List<String> keys;
         private final String status;
+        private final String sourceMode;
         private final String unavailableReason;
 
-        private ResolveResult(List<String> keys, String status, String unavailableReason) {
+        private ResolveResult(List<String> keys, String status, String sourceMode, String unavailableReason) {
             this.keys = keys;
             this.status = status;
+            this.sourceMode = sourceMode;
             this.unavailableReason = unavailableReason;
         }
     }
@@ -151,6 +172,10 @@ public final class ColumnSizeKeyResolver {
 
         boolean partial() {
             return partial;
+        }
+
+        boolean singleTable() {
+            return baseTable != null && !baseTable.isEmpty() && joins.isEmpty();
         }
 
         private static String joinKind(String raw) {
