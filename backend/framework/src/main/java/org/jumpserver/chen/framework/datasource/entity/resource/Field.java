@@ -1,5 +1,7 @@
 package org.jumpserver.chen.framework.datasource.entity.resource;
 
+import com.alibaba.fastjson.annotation.JSONField;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Data;
 import org.jumpserver.chen.framework.utils.TreeUtils;
 
@@ -7,6 +9,9 @@ import org.jumpserver.chen.framework.utils.TreeUtils;
 public class Field implements ResourceNode {
 
     private String name;
+    @JSONField(serialize = false)
+    @JsonIgnore
+    private String sourceName;
     private String schema;
     private String table;
     private String type;

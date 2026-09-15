@@ -253,14 +253,16 @@ public abstract class BaseSQLActuator implements SQLActuator {
                 // 列名可能是别名(LABEL)，主键比对必须用真实列名(NAME)。
                 List<String> rawColumnNames = new ArrayList<>(columnCount);
                 for (int i = 1; i <= columnCount; i++) {
+                    String rawColumnName = metadataString(metadata, i, MetadataField.NAME);
                     Field field = new Field();
                     field.setName(nonEmpty(metadataString(metadata, i, MetadataField.LABEL),
-                            metadataString(metadata, i, MetadataField.NAME)));
+                            rawColumnName));
+                    field.setSourceName(rawColumnName);
                     field.setTable(metadataString(metadata, i, MetadataField.TABLE));
                     field.setSchema(metadataString(metadata, i, MetadataField.SCHEMA));
                     field.setType(metadataString(metadata, i, MetadataField.TYPE));
                     result.getFields().add(field);
-                    rawColumnNames.add(metadataString(metadata, i, MetadataField.NAME));
+                    rawColumnNames.add(rawColumnName);
                 }
                 applyNullable(metadata, result.getFields());
 
