@@ -17,6 +17,7 @@ public class TestColumnSizeKeyResolver {
         joinFallback();
         joinWithoutMetadataIsUnresolved();
         unknownFallback();
+        sourceParsingBoundaries();
 
         if (failures > 0) {
             System.err.println("FAIL: " + failures + " case(s) failed");
@@ -112,6 +113,52 @@ public class TestColumnSizeKeyResolver {
                 SizeCalculator.STATUS_PARTIAL, result.getStatus());
         report("unknown mode unresolved", "unresolved".equals(result.getSourceMode()),
                 "unresolved", result.getSourceMode());
+    }
+
+    private static void sourceParsingBoundaries() {
+        for (String sql : List.of(
+                "SELECT COUNT(*) AS cnt FROM users, orders",
+                "WITH c AS (SELECT * FROM users) SELECT COUNT(*) AS cnt FROM c, orders",
+                "WITH c AS (SELECT * FROM users) SELECT COUNT(*) AS cnt FROM c",
+                "SELECT (SELECT COUNT(*) FROM orders) AS cnt FROM users",
+                "SELECT COUNT(*) AS cnt FROM (SELECT * FROM users) u",
+                "SELECT COUNT(*) AS cnt FROM users WHERE EXISTS (SELECT 1 FROM orders)",
+                "SELECT COUNT(*) AS cnt FROM users UNION ALL SELECT COUNT(*) FROM orders",
+                "SELECT COUNT(*) AS cnt FROM users; SELECT COUNT(*) FROM orders",
+                "SELECT COUNT(*) AS cnt FROM users WHERE (")) {
+            assertSource(sql, DbType.postgresql, "unknown.cnt", "unresolved");
+        }
+        for (String sql : List.of(
+                "SELECT 'from fake' AS cnt FROM users",
+                "SELECT COUNT(*) AS cnt /* FROM fake JOIN other */ FROM users",
+                "-- FROM fake\nSELECT COUNT(*) AS cnt FROM users",
+                "SELECT COUNT(*) AS cnt FROM \"public\".\"users\"",
+                "SELECT COUNT(*) AS cnt FROM public.users u")) {
+            assertSource(sql, DbType.postgresql, "users.cnt", "sql_single_table_fallback");
+        }
+        assertSource("SELECT COUNT(*) AS cnt FROM [dbo].[users]", DbType.sqlserver,
+                "users.cnt", "sql_single_table_fallback");
+        assertSource("SELECT COUNT(*) AS cnt FROM `app`.`users`", DbType.mysql,
+                "users.cnt", "sql_single_table_fallback");
+        assertSource("SELECT COUNT(*) AS cnt FROM \"public\".\"user.logs\"", DbType.postgresql,
+                "user.logs.cnt", "sql_single_table_fallback");
+        assertSource("SELECT COUNT(*) AS cnt FROM \"public\".\"user data\"", DbType.postgresql,
+                "user data.cnt", "sql_single_table_fallback");
+        assertSource("SELECT COUNT(*) AS cnt FROM \"public\".\"user\"\"data\"", DbType.postgresql,
+                "unknown.cnt", "unresolved");
+        Field exact = field("alias_id", "users");
+        exact.setSourceName("id");
+        var result = ColumnSizeKeyResolver.resolve("unparseable SQL", DbType.postgresql, List.of(exact));
+        report("metadata independent of SQL parse", result.getKeys().equals(List.of("users.id"))
+                        && "metadata_exact".equals(result.getSourceMode()),
+                "users.id / metadata_exact", result.getKeys() + " / " + result.getSourceMode());
+    }
+
+    private static void assertSource(String sql, DbType type, String key, String mode) {
+        var result = ColumnSizeKeyResolver.resolve(sql, type, List.of(field("cnt", null)));
+        report(sql, result.getKeys().equals(List.of(key)) && mode.equals(result.getSourceMode())
+                        && "partial".equals(result.getStatus()),
+                key + " / " + mode, result.getKeys() + " / " + result.getSourceMode());
     }
 
     private static Field field(String name, String table) {

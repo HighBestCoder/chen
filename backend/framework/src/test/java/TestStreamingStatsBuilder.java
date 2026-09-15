@@ -33,6 +33,7 @@ public class TestStreamingStatsBuilder {
         streamedPathUsesCarriedStats();
         legacyPathFallsBackToCompute();
         materializedPathRecordsSingleTableFallbackMode();
+        unresolvedSourcePreservesSizeTotals();
 
         if (failures > 0) {
             System.err.println("FAIL: " + failures + " case(s) failed");
@@ -138,6 +139,26 @@ public class TestStreamingStatsBuilder {
         report("materialized no metadata source mode",
                 "sql_single_table_fallback".equals(stats.getExtras().get("size_by_column_source_mode")),
                 "sql_single_table_fallback", stats.getExtras().get("size_by_column_source_mode"));
+    }
+
+    private static void unresolvedSourcePreservesSizeTotals() {
+        String sql = "SELECT COUNT(*) AS cnt FROM users, orders";
+        SQLQueryResult result = new SQLQueryResult(sql);
+        result.setHasResultSet(true);
+        Field field = new Field();
+        field.setName("cnt");
+        result.setFields(List.of(field));
+        result.setData(List.of(row(123)));
+        result.setTotal(1);
+        ExecutionStats stats = SqlExecutionStatsBuilder.fromSuccess(null, sql, result);
+        report("ambiguous source preserves total bytes", eq(stats.getSizeBytes(), 3L), 3L, stats.getSizeBytes());
+        report("ambiguous source preserves total status", "ok".equals(stats.getExtras().get("size_stats_status")),
+                "ok", stats.getExtras().get("size_stats_status"));
+        report("ambiguous source emits unknown byte map",
+                Map.of("unknown.cnt", 3L).equals(stats.getExtras().get("size_by_column")),
+                Map.of("unknown.cnt", 3L), stats.getExtras().get("size_by_column"));
+        report("ambiguous source mode survives builder", "unresolved".equals(stats.getExtras().get("size_by_column_source_mode")),
+                "unresolved", stats.getExtras().get("size_by_column_source_mode"));
     }
 
     private static boolean eq(Long actual, long expected) {

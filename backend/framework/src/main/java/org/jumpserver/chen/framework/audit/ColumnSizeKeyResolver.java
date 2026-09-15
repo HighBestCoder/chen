@@ -1,14 +1,19 @@
 package org.jumpserver.chen.framework.audit;
 
 import com.alibaba.druid.DbType;
+import com.alibaba.druid.sql.SQLUtils;
+import com.alibaba.druid.sql.ast.SQLName;
+import com.alibaba.druid.sql.ast.SQLObject;
+import com.alibaba.druid.sql.ast.statement.SQLExprTableSource;
+import com.alibaba.druid.sql.ast.statement.SQLSelect;
+import com.alibaba.druid.sql.ast.statement.SQLSelectQueryBlock;
+import com.alibaba.druid.sql.ast.statement.SQLSelectStatement;
+import com.alibaba.druid.sql.visitor.SQLASTVisitorAdapter;
 import lombok.Getter;
 import org.jumpserver.chen.framework.datasource.entity.resource.Field;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Resolves stable keys for per-column size accounting. JDBC metadata is the
@@ -21,11 +26,6 @@ public final class ColumnSizeKeyResolver {
     public static final String MODE_METADATA_EXACT = "metadata_exact";
     public static final String MODE_SQL_SINGLE_TABLE_FALLBACK = "sql_single_table_fallback";
     public static final String MODE_UNRESOLVED = "unresolved";
-    private static final Pattern FROM_TABLE = Pattern.compile(
-            "(?is)\\bfrom\\s+([`\\\"\\[]?[A-Za-z0-9_.$-]+[`\\\"\\]]?)");
-    private static final Pattern JOIN_TABLE = Pattern.compile(
-            "(?is)\\b(left\\s+outer|right\\s+outer|full\\s+outer|inner|left|right|full|cross)?\\s*join\\s+([`\\\"\\[]?[A-Za-z0-9_.$-]+[`\\\"\\]]?)");
-
     private ColumnSizeKeyResolver() {
     }
 
@@ -34,7 +34,7 @@ public final class ColumnSizeKeyResolver {
             return new ResolveResult(List.of(), SizeCalculator.STATUS_OK, MODE_METADATA_EXACT, null);
         }
 
-        SourceInfo sourceInfo = SourceInfo.from(command);
+        SourceInfo sourceInfo = null;
         List<String> keys = new ArrayList<>(fields.size());
         boolean partial = false;
         String reason = null;
@@ -56,6 +56,9 @@ public final class ColumnSizeKeyResolver {
             }
 
             partial = true;
+            if (sourceInfo == null) {
+                sourceInfo = SourceInfo.from(command, dbType);
+            }
             if (sourceInfo.singleTable()) {
                 keys.add(sourceInfo.baseTable + "." + label);
                 if (MODE_METADATA_EXACT.equals(mode)) {
@@ -89,21 +92,22 @@ public final class ColumnSizeKeyResolver {
         return table + "." + column;
     }
 
-    static String normalize(String value) {
-        if (value == null) {
-            return "";
+    // The AST has already separated schema/catalog from the final identifier.
+    // Preserve dots and spaces inside quoted names so fallback keys match JDBC.
+    private static String unquoteIdentifier(String value) {
+        // Druid can rewrite escaped quotes (e.g. PostgreSQL doubled quotes)
+        // into backslash escapes. Without the original token their physical
+        // spelling is ambiguous; keep such identifiers unresolved.
+        if (value != null && value.indexOf('\\') >= 0) return null;
+        if (value == null || value.length() < 2) return value;
+        char first = value.charAt(0);
+        char last = value.charAt(value.length() - 1);
+        if ((first == '"' && last == '"') || (first == '`' && last == '`')
+                || (first == '[' && last == ']')) {
+            String quote = String.valueOf(last);
+            return value.substring(1, value.length() - 1).replace(quote + quote, quote);
         }
-        String v = value.trim();
-        while ((v.startsWith("`") && v.endsWith("`"))
-                || (v.startsWith("\"") && v.endsWith("\""))
-                || (v.startsWith("[") && v.endsWith("]"))) {
-            v = v.substring(1, v.length() - 1).trim();
-        }
-        int dot = Math.max(v.lastIndexOf('.'), v.lastIndexOf(':'));
-        if (dot >= 0 && dot + 1 < v.length()) {
-            v = v.substring(dot + 1);
-        }
-        return v.replaceAll("\\s+", "_");
+        return value;
     }
 
     private static String emptyToFallback(String value, String fallback) {
@@ -127,76 +131,47 @@ public final class ColumnSizeKeyResolver {
 
     private static final class SourceInfo {
         private final String baseTable;
-        private final List<JoinPart> joins;
-        private final boolean partial;
 
-        private SourceInfo(String baseTable, List<JoinPart> joins, boolean partial) {
+        private SourceInfo(String baseTable) {
             this.baseTable = baseTable;
-            this.joins = joins;
-            this.partial = partial;
         }
 
-        static SourceInfo from(String command) {
+        static SourceInfo from(String command, DbType dbType) {
             if (command == null || command.trim().isEmpty()) {
-                return new SourceInfo(null, List.of(), true);
+                return new SourceInfo(null);
             }
-            Matcher from = FROM_TABLE.matcher(command);
-            if (!from.find()) {
-                return new SourceInfo(null, List.of(), true);
-            }
-            String base = normalize(from.group(1));
-            List<JoinPart> joins = new ArrayList<>();
-            Matcher join = JOIN_TABLE.matcher(command);
-            while (join.find()) {
-                joins.add(new JoinPart(joinKind(join.group(1)), normalize(join.group(2))));
-            }
-            return new SourceInfo(base, joins, true); // Regex attribution is best-effort, never authoritative.
-        }
-
-        String prefix() {
-            if (baseTable == null || baseTable.isEmpty()) {
-                return null;
-            }
-            if (joins.isEmpty()) {
-                return baseTable;
-            }
-            StringBuilder sb = new StringBuilder(baseTable);
-            for (JoinPart join : joins) {
-                if (join.table == null || join.table.isEmpty()) {
-                    return null;
+            try {
+                var statements = SQLUtils.parseStatements(command, dbType);
+                if (statements.size() != 1 || !(statements.get(0) instanceof SQLSelectStatement statement)) {
+                    return new SourceInfo(null);
                 }
-                sb.append('_').append(join.kind).append('_').append(join.table);
+                SQLSelect select = statement.getSelect();
+                if (select.getWithSubQuery() != null
+                        || !(select.getQuery() instanceof SQLSelectQueryBlock block)
+                        || !(block.getFrom() instanceof SQLExprTableSource table)
+                        || !(table.getExpr() instanceof SQLName name)) {
+                    return new SourceInfo(null);
+                }
+                // A simple outer FROM is insufficient: SELECT/WHERE may contain
+                // subqueries with additional sources. Do not infer their lineage.
+                boolean[] nestedSelect = {false};
+                select.accept(new SQLASTVisitorAdapter() {
+                    @Override
+                    public void preVisit(SQLObject object) {
+                        if (object instanceof SQLSelect && object != select) nestedSelect[0] = true;
+                    }
+                });
+                if (nestedSelect[0]) return new SourceInfo(null);
+                return new SourceInfo(unquoteIdentifier(name.getSimpleName()));
+            } catch (RuntimeException ignored) {
+                // Unsupported dialect or malformed SQL must not affect querying
+                // or the independently accumulated total byte count.
+                return new SourceInfo(null);
             }
-            return sb.toString();
-        }
-
-        boolean partial() {
-            return partial;
         }
 
         boolean singleTable() {
-            return baseTable != null && !baseTable.isEmpty() && joins.isEmpty();
-        }
-
-        private static String joinKind(String raw) {
-            if (raw == null || raw.trim().isEmpty()) {
-                return "inner_join";
-            }
-            String kind = raw.toLowerCase(Locale.ROOT).replaceAll("\\s+", "_");
-            if (!kind.endsWith("_join")) {
-                kind = kind + "_join";
-            }
-            return kind;
-        }
-    }
-
-    private static final class JoinPart {
-        private final String kind;
-        private final String table;
-
-        private JoinPart(String kind, String table) {
-            this.kind = kind;
-            this.table = table;
+            return baseTable != null && !baseTable.isEmpty();
         }
     }
 }
