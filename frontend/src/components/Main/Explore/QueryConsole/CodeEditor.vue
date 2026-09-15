@@ -269,7 +269,7 @@ export default {
       if (this.state.inQuery || this.state.disconnected) return
       const sql = this.selectionValue || this.statement
       if (new TextEncoder().encode(sql).length > 256 * 1024) {
-        this.subjects.messageSubject.next({ title: 'Command too large', message: 'Maximum command size is 256 KiB UTF-8.', type: 'error' })
+        this.subjects.messageSubject.next({ title: 'Command too large', message: 'Maximum command size is 256 KiB UTF-8.', type: 'error', closeDelay: 0 })
         return
       }
       this.state.inQuery = true

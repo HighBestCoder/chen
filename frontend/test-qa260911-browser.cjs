@@ -88,6 +88,20 @@ async function main(){
       await page.locator('.query-message .el-alert__closebtn').click()
       await page.waitForTimeout(30)
     }
+    // Exact DEF-10 scenario: two statements with a 300 KB string, not the statement budget.
+    const sentBefore=calls.filter(x=>x.action?.action==='run_sql').length
+    await page.locator('.CodeMirror').evaluate(e=>e.CodeMirror.setValue("var s='"+'x'.repeat(300000)+"'; s.length;"))
+    await page.locator('button:has(.icon-chen-play)').click()
+    const tooLarge=page.getByText('Maximum command size is 256 KiB UTF-8.',{exact:true})
+    await tooLarge.waitFor({state:'visible'})
+    await page.waitForTimeout(5500)
+    assert(await tooLarge.isVisible(),'source-limit error vanished before user dismissal')
+    assert.equal(calls.filter(x=>x.action?.action==='run_sql').length,sentBefore,'oversized input sent to backend')
+    await page.locator('.query-message .el-alert__closebtn').click()
+    await page.locator('.CodeMirror').evaluate(e=>e.CodeMirror.setValue('SELECT recovered'))
+    await page.locator('button:has(.icon-chen-play)').click()
+    await page.waitForTimeout(500)
+    assert.equal(calls.filter(x=>x.action?.action==='run_sql').length,sentBefore+1,'query did not recover after rejection')
     const failed=await context.newPage();await failed.goto(base+'/chen/#connectionToken=bad')
     await failed.getByText('Connection authentication failed. Check credentials and authorization.',{exact:true}).last().waitFor()
     assert(await failed.locator('.el-dialog:visible').innerText().then(x=>x.includes('Connection failed')))

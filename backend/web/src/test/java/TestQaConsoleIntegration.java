@@ -41,6 +41,10 @@ public class TestQaConsoleIntegration {
         try(var observer=manager.getConnection()){
             observer.setAutoCommit(true);int pid;
             try(var s=connection.createStatement();var r=s.executeQuery("SELECT pg_backend_pid()")){r.next();pid=r.getInt(1);}
+            // The QA sequence performs earlier queries on this SAME console.
+            console.onSQL("SELECT 'warmup-double-click'");
+            console.onSQL("SELECT 'warmup-keyboard'");
+            for(int cycle=0;cycle<2;cycle++) {
             var running=pool.submit(()->{SessionManager.setContext(token);try{console.onSQL("SELECT pg_sleep(20)");}finally{SessionManager.setContext(null);}});
             boolean active=false;
             for(int i=0;i<100;i++){
@@ -55,12 +59,15 @@ public class TestQaConsoleIntegration {
             try(var s=observer.createStatement();var r=s.executeQuery("SELECT state FROM pg_stat_activity WHERE pid="+pid)){
                 if(r.next()&&"active".equals(r.getString(1)))throw new AssertionError("cancel did not reach database");
             }
-            SessionManager.setContext(token);packets.clear();
+            SessionManager.setContext(token);
+            console.onSQL("SELECT 'after-cancel'");
+            }
+            packets.clear();
             console.onSQL("SELECT 'first' AS marker; SELECT 'second' AS marker;");
             long views=packets.stream().map(JSON::parseObject).filter(p->"new_data_view".equals(p.getString("type"))).count();
             if(views!=2)throw new AssertionError("OBS-08 multiple SELECT result tabs lost: "+views);
             if(packets.stream().noneMatch(x->x.contains("first")) || packets.stream().noneMatch(x->x.contains("second")))throw new AssertionError("result lost");
-            System.out.println("DEF-14/OBS-08 full console: WebSocket cancel ends actual DB query; multiple SELECTs retain two independent result tabs");
+            System.out.println("DEF-14/OBS-08 full console: repeated WebSocket cancel after warmup ends actual DB query; multiple SELECTs retain two independent result tabs");
         }finally{pool.shutdownNow();handler.shutdown();SessionManager.setContext(null);SessionManager.unregisterSession(token);console.close();manager.close();}
     }
 }

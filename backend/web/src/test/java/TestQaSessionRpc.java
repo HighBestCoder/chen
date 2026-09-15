@@ -43,9 +43,11 @@ public class TestQaSessionRpc {
             session.setPacketIO(new PacketIO(new TestSessionBoundaries.Socket().ws));
             if(!session.allowsExecution() || session.canDownload())throw new AssertionError("connect-only permissions ignored");
             core.download=true;if(!session.canDownload())throw new AssertionError("new download grant ignored");
+            core.download=false;
+            if(session.canDownload() || !session.allowsExecution())throw new AssertionError("download-only revocation must deny export but retain CONNECT");
             core.revoked=true;if(session.allowsExecution() || session.canDownload())throw new AssertionError("revocation ignored");
-            if(core.refreshed!=0 || core.checked!=4)throw new AssertionError("authorization caused token acquisition or stale cache");
-            System.out.println("DEF-12/19 production session + real gRPC: no download, grant, revoke without token refresh passed");
+            if(core.refreshed!=0 || core.checked!=6)throw new AssertionError("authorization caused token acquisition or stale cache");
+            System.out.println("DEF-12/19 production session + real gRPC: no download, grant, revoke download while CONNECT stays valid, revoke CONNECT without token refresh passed");
         }finally{if(session!=null)session.close();channel.shutdownNow();server.shutdownNow();}
     }
 }

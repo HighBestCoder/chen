@@ -36,12 +36,14 @@ export default {
       this.message = data.message
       this.type = data.type
       this.opened = true
-      this.closeDelay = data.closeDelay || 5
+      this.closeDelay = data.closeDelay == null ? 5 : data.closeDelay
 
       clearTimeout(this.dismissTimer)
-      this.dismissTimer = setTimeout(() => {
-        this.opened = false
-      }, this.closeDelay * 1000)
+      if (this.closeDelay > 0) {
+        this.dismissTimer = setTimeout(() => {
+          this.opened = false
+        }, this.closeDelay * 1000)
+      }
     })
   },
   beforeDestroy() {
