@@ -8,13 +8,13 @@ const message = {
     "account": "授权账号",
     "cancel": "取消",
     "open": "打开新控制台",
-    "empty": "没有可用的授权 MongoDB / Cosmos DB Mongo API 实例。",
-    "no_account": "没有可直接连接的授权账号。需要输入凭据或审批时，请从工作台连接。",
-    "instance_org_required": "缺少组织上下文，请从 JumpServer 工作台重新进入。",
-    "instance_login_required": "请先登录 JumpServer 工作台，再重试。",
-    "instance_denied": "无权连接或连接尚未获准，请检查授权；需要审批时请从工作台连接。",
-    "instance_failed": "无法加载或连接实例，请刷新重试；检查授权、登录 ACL 及网络。",
-    "instance_popup": "浏览器阻止了新页面，请允许弹出窗口后重试。"
+    "empty": "No authorized MongoDB / Cosmos DB Mongo API instances available.",
+    "no_account": "No account available for direct connection. Use the workbench if credentials or approval are required.",
+    "instance_org_required": "Organization context is missing. Reopen from the JumpServer workbench.",
+    "instance_login_required": "Sign in to the JumpServer workbench and retry.",
+    "instance_denied": "Connection denied or not approved. Check permissions; use the workbench for approval.",
+    "instance_failed": "Unable to load or connect. Retry and check permissions, login ACL and network.",
+    "instance_popup": "Allow popups for this site and retry."
 },
   title: {
     database_explorer: '数据库浏览器',
@@ -56,13 +56,13 @@ const message = {
     export_selected: '导出选中'
   },
   message: {
-    command_required: '请输入命令名称和内容',
+    command_required: 'Command name and content are required',
     save_success: '保存成功',
-    command_sensitive: '命令中疑似包含连接串、密码或 Token，请移除敏感信息后再保存'
+    command_sensitive: 'The command appears to contain a connection string, password, or token. Remove sensitive data before saving.'
   },
   msg: {
-    copy_not_allowed: '不允许复制，请联系管理员开启！',
-    paste_not_allowed: '不允许粘贴，请联系管理员开启！'
+    copy_not_allowed: 'You are not allowed to copy, please contact the administrator to open it!',
+    paste_not_allowed: 'You are not allowed to paste, please contact the administrator to open it!'
   }
 
 }

@@ -17,7 +17,10 @@ public class MessageUtils {
 
     public static String get(String msgKey, Object... args) {
         try {
-            var locale = SessionManager.getCurrentSession().getLocale();
+            // Customer-facing errors must remain English regardless of the UI language.
+            boolean error = msgKey.startsWith("msg.error.") || msgKey.endsWith("init_datasource_failed")
+                    || msgKey.equals("msg.dialog.title.error_message") || msgKey.equals("msg.dialog.session_locked");
+            var locale = error ? java.util.Locale.US : SessionManager.getCurrentSession().getLocale();
             var text = messageSource.getMessage(msgKey, null, locale);
             return String.format(locale, text, args);
         } catch (Exception e) {

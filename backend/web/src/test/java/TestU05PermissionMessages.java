@@ -26,16 +26,16 @@ public class TestU05PermissionMessages {
             var wrapped=new RuntimeException("wrapper",nested);
             for(Throwable error:new Throwable[]{nested,wrapped,new OperationPermissionDeniedException(new com.mongodb.MongoException(13,"private namespace"))}) {
                 Message message=Message.error("Fetch error",error);
-                require(message.getTitle().equals("无该操作权限")&&message.getMessage().equals("无该操作权限"),"console permission message leaked detail or lost translation");
+                require(message.getTitle().equals("No permission for this operation")&&message.getMessage().equals("No permission for this operation"),"console permission message leaked detail or lost translation");
                 MockHttpServletResponse response=new MockHttpServletResponse();new WebExceptionResolver().resolveException(new MockHttpServletRequest(),response,null,new RuntimeException(error));
-                require(response.getStatus()==403&&response.getContentAsString().equals("无该操作权限"),"HTTP permission response incorrect");
+                require(response.getStatus()==403&&response.getContentAsString().equals("No permission for this operation"),"HTTP permission response incorrect");
             }
             MockHttpServletResponse rawMongo=new MockHttpServletResponse();
             new WebExceptionResolver().resolveException(new MockHttpServletRequest(),rawMongo,null,new com.mongodb.MongoException(13,"private namespace"));
-            require(rawMongo.getStatus()==403&&rawMongo.getContentAsString().equals("无该操作权限"),"native Mongo metadata HTTP denial not normalized");
+            require(rawMongo.getStatus()==403&&rawMongo.getContentAsString().equals("No permission for this operation"),"native Mongo metadata HTTP denial not normalized");
             MockHttpServletResponse auth=new MockHttpServletResponse();
             new WebExceptionResolver().resolveException(new MockHttpServletRequest(),auth,null,new com.mongodb.MongoException(18,"bad authentication"));
-            require(auth.getStatus()==500&&!auth.getContentAsString().contains("无该操作权限"),"HTTP authentication mislabeled authorization");
+            require(auth.getStatus()==500&&!auth.getContentAsString().contains("No permission for this operation"),"HTTP authentication mislabeled authorization");
             require(MongoPermissionErrorClassifier.isPermissionDenied(new RuntimeException(new com.mongodb.MongoException(13,"Unauthorized"))),"Mongo wrapped denial lost");
             require(!MongoPermissionErrorClassifier.isPermissionDenied(new com.mongodb.MongoException(18,"AuthenticationFailed")),"Mongo authentication mislabeled");
             require(!MongoPermissionErrorClassifier.isPermissionDenied(new com.mongodb.MongoException(11000,"duplicate key")),"constraint mislabeled");

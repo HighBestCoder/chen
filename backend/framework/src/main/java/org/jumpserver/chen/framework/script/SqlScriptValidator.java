@@ -11,7 +11,7 @@ import java.util.Locale;
  * <p>Per the task spec the back end is the source of truth for both
  * the file extension and the size cap. The default cap is 10 MiB
  * (10 * 1024 * 1024 bytes) to match the customer-facing prompt
- * "文件大小超出限制（最大 10MB），请拆分后上传".</p>
+ * "File exceeds the size limit (maximum 10 MB). Split it before uploading.".</p>
  *
  * <p>The validator deliberately operates on byte counts rather than
  * character counts so it produces the same answer regardless of the
@@ -81,7 +81,7 @@ public final class SqlScriptValidator {
         }
         if (sizeBytes > maxBytes) {
             return Result.fail(Reason.SIZE_EXCEEDED, String.format(
-                    "文件大小超出限制（最大 %d MB），请拆分后上传",
+                    "File exceeds the size limit (maximum %d MB). Split it before uploading.",
                     maxBytes / (1024L * 1024L)));
         }
         return Result.ok();

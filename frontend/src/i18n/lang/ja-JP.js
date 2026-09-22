@@ -8,13 +8,13 @@ const message = {
     "account": "許可されたアカウント",
     "cancel": "キャンセル",
     "open": "新しいコンソールを開く",
-    "empty": "利用できる MongoDB / Cosmos DB Mongo API インスタンスがありません。",
-    "no_account": "直接接続できるアカウントがありません。認証情報の入力や承認が必要な場合はワークベンチから接続してください。",
-    "instance_org_required": "組織情報がありません。JumpServer ワークベンチから開き直してください。",
-    "instance_login_required": "JumpServer ワークベンチにログインして再試行してください。",
-    "instance_denied": "接続が拒否されたか、未承認です。権限を確認し、承認が必要な場合はワークベンチから接続してください。",
-    "instance_failed": "読み込みまたは接続に失敗しました。権限、ログイン ACL、ネットワークを確認して再試行してください。",
-    "instance_popup": "ポップアップを許可して再試行してください。"
+    "empty": "No authorized MongoDB / Cosmos DB Mongo API instances available.",
+    "no_account": "No account available for direct connection. Use the workbench if credentials or approval are required.",
+    "instance_org_required": "Organization context is missing. Reopen from the JumpServer workbench.",
+    "instance_login_required": "Sign in to the JumpServer workbench and retry.",
+    "instance_denied": "Connection denied or not approved. Check permissions; use the workbench for approval.",
+    "instance_failed": "Unable to load or connect. Retry and check permissions, login ACL and network.",
+    "instance_popup": "Allow popups for this site and retry."
 },
   title: {
     database_explorer: 'データベースエクスプローラ',
@@ -55,13 +55,13 @@ const message = {
     export_selected: '選択行をエクスポート'
   },
   msg: {
-    copy_not_allowed: 'コピーは許可されていません。管理者に連絡して開放してもらってください！',
-    paste_not_allowed: '貼り付けは許可されていません。管理者に連絡して開放してもらってください！'
+    copy_not_allowed: 'You are not allowed to copy, please contact the administrator to open it!',
+    paste_not_allowed: 'You are not allowed to paste, please contact the administrator to open it!'
   },
   message: {
-    command_required: 'コマンド名と内容を入力してください',
+    command_required: 'Command name and content are required',
     save_success: '保存しました',
-    command_sensitive: 'コマンドに接続文字列、パスワード、またはトークンが含まれている可能性があります。機密情報を削除してから保存してください。'
+    command_sensitive: 'The command appears to contain a connection string, password, or token. Remove sensitive data before saving.'
   }
 }
 export default {

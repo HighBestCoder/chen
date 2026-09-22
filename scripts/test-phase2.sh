@@ -11,7 +11,7 @@ tests=(
   TestU08MongoSettings
   TestU07Limits
   TestU06DriverContract
-  TestU05PermissionChains TestU05PermissionMessages
+  TestU05PermissionChains TestU05PermissionMessages TestEnglishErrorMessages
   TestMongoU02Parser TestMongoU02Audit TestMongoU02Remaining TestMongoScriptWorker TestMongoU02ReplayAndDecoded
   TestS09Utilities TestS09Adapters TestS09Messages TestS09OracleText
   TestS08ClientAddress
