@@ -32,13 +32,13 @@ export default {
       type: Object,
       default: () => {
         return {
-          title: '数据源详情',
+          title: 'Data source details',
           type: 'detail',
           width: '30%',
           items: [
             {
               name: 'name',
-              label: '名称',
+              label: 'Name',
               type: 'text',
               value: 'mysql5'
             }
