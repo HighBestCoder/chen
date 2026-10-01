@@ -45,6 +45,11 @@ public class ConsoleController {
         if (!SessionManager.getCurrentSession().canUpload()) {
             throw new ChenException(MessageUtils.get("msg.error.no_permission"));
         }
+        // The file is stored and executed as SQL; refuse other files (DEF-26).
+        String name = file.getOriginalFilename();
+        if (name == null || !name.toLowerCase(java.util.Locale.ROOT).endsWith(".sql")) {
+            throw new ChenException("Only .sql files can be uploaded");
+        }
         try {
             var basePath = SessionManager.getCurrentSession().getTempPath();
             var bytes = file.getBytes();

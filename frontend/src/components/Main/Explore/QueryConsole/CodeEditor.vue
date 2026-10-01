@@ -330,13 +330,19 @@ export default {
       }).catch(() => { /* request interceptor reports the failure; stale hints stay cleared */ })
     },
     onBeforeUpload(file) {
+      if (!/\.sql$/i.test(file.name)) {
+        this.$message.error(this.$tc('message.upload_sql_only'))
+        return false
+      }
       this.state.inQuery = true
     },
     onUploadSuccess(resp, file, fileList) {
       this.$emit('action', { action: 'run_sql_file', data: resp.path })
     },
-    onUploadError() {
+    onUploadError(error) {
       this.state.inQuery = false
+      // The server explains a refused upload (no permission, wrong file type).
+      this.$message.error(error && error.message ? error.message : this.$tc('message.upload_failed'))
     }
   }
 }

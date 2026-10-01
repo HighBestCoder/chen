@@ -57,6 +57,8 @@ const message = {
   },
   message: {
     command_required: 'Command name and content are required',
+    upload_sql_only: 'Only .sql files can be uploaded',
+    upload_failed: 'Upload failed',
     save_success: '保存成功',
     command_sensitive: 'The command appears to contain a connection string, password, or token. Remove sensitive data before saving.'
   },

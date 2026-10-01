@@ -52,6 +52,18 @@ public class TestConsoleFiles {
             Files.writeString(own, "SELECT owned");
             console.onSQLFile(own.getFileName().toString());
             require(executed.get(executed.size()-1).equals("SELECT owned") && !Files.exists(own), "valid upload not consumed");
+            for (String name : java.util.Arrays.asList("notsql.txt", "sql", null)) {
+                MultipartFile file = (MultipartFile) Proxy.newProxyInstance(MultipartFile.class.getClassLoader(),
+                    new Class[]{MultipartFile.class}, (p,m,v) -> m.getName().equals("getBytes") ? "SELECT 1".getBytes()
+                            : m.getName().equals("getOriginalFilename") ? name : null);
+                long stored;
+                try (var files = Files.list(dir)) { stored = files.count(); }
+                try { controller.uploadData(file); failures.add("upload accepted non-SQL file: " + name); }
+                catch (RuntimeException expected) {
+                    if (!"Only .sql files can be uploaded".equals(expected.getMessage())) failures.add("wrong upload error: " + expected.getMessage());
+                }
+                try (var files = Files.list(dir)) { if (files.count() != stored) failures.add("rejected upload stored a file: " + name); }
+            }
             ExecutorService pool = Executors.newFixedThreadPool(8);
             List<Future<Map.Entry<String,String>>> futures = new ArrayList<>();
             try {
@@ -61,7 +73,8 @@ public class TestConsoleFiles {
                         SessionManager.setContext(token);
                         try {
                             MultipartFile file = (MultipartFile) Proxy.newProxyInstance(MultipartFile.class.getClassLoader(),
-                                new Class[]{MultipartFile.class}, (p,m,v) -> m.getName().equals("getBytes") ? sql.getBytes(java.nio.charset.StandardCharsets.UTF_8) : null);
+                                new Class[]{MultipartFile.class}, (p,m,v) -> m.getName().equals("getBytes") ? sql.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+                                        : m.getName().equals("getOriginalFilename") ? "q" + sql.length() + ".SQL" : null);
                             return Map.entry(controller.uploadData(file).getPath(), sql);
                         } finally { SessionManager.setContext(null); }
                     }));
