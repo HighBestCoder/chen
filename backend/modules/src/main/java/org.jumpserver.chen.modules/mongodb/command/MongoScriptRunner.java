@@ -59,7 +59,12 @@ public final class MongoScriptRunner {
                     default -> throw new MongoCommandException("Invalid script worker message");
                 }
             }
-        } catch(java.io.IOException error) {throw new MongoCommandException("Script worker stopped, exceeded its resource limit, or returned an oversized result; completed database writes are not replayed");}
+        } catch(java.io.IOException error) {
+            // The deadline kills the worker, which surfaces here as a closed channel (DEF-22).
+            if(deadline!=null&&deadline.isDone()&&!deadline.isCancelled())
+                throw new MongoCommandException("Script exceeds the "+timeoutMs/1000+" second time limit; completed database writes are not replayed");
+            throw new MongoCommandException("Script worker stopped, exceeded its resource limit, or returned an oversized result; completed database writes are not replayed");
+        }
         finally {
             if(deadline!=null)deadline.cancel(false);
             if(process!=null) {process.destroyForcibly();try{process.waitFor(5,TimeUnit.SECONDS);}catch(InterruptedException e){Thread.currentThread().interrupt();}}

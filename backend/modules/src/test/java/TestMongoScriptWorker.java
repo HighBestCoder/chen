@@ -26,6 +26,14 @@ public class TestMongoScriptWorker {
         }
         try{MongoScriptRunner.evaluate("const a=[];for(;;)a.push(new Array(1000000).fill('x'));","fixture",20_000,(text,db)->"{}");throw new AssertionError("heap limit not enforced");}
         catch(MongoCommandException expected){}
+        // DEF-22: slow database calls reach the time limit before the call limit; say so.
+        try{MongoScriptRunner.evaluate("for(let i=0;i<2000;i++)db.c.countDocuments({});","fixture",3_000,(text,db)->{
+                try{Thread.sleep(100);}catch(InterruptedException e){Thread.currentThread().interrupt();}
+                return new Document("value",0).toJson();});throw new AssertionError("time limit not enforced");}
+        catch(MongoCommandException expected){require(expected.getMessage().startsWith("Script exceeds the 3 second time limit"),"time limit reported as: "+expected.getMessage());}
+        int[] dbCalls={0};
+        try{MongoScriptRunner.evaluate("for(let i=0;i<2000;i++)db.c.countDocuments({});","fixture",60_000,(text,db)->{dbCalls[0]++;return new Document("value",0).toJson();});throw new AssertionError("call limit not enforced");}
+        catch(MongoCommandException expected){require(expected.getMessage().equals("Script exceeds 1000 database operations")&&dbCalls[0]==1000,"call limit reported as: "+expected.getMessage()+" after "+dbCalls[0]);}
         result=MongoScriptRunner.evaluate("let x=2; x+3;","fixture",30_000,(text,db)->"{}");
         require(((Number)result.get("value")).intValue()==5,"failed worker poisoned subsequent scripts");
         System.out.println("U02 script worker: variables/loops/cursors/BSON, host I/O denial, CPU/heap limits and recovery passed");
