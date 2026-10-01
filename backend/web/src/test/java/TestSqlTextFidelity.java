@@ -39,6 +39,17 @@ public class TestSqlTextFidelity {
             if(!String.join("", split).equals(dollar+"; SELECT 2") || split.size()!=2)failures.add("dollar split changed");
             if(!PageUtils.limit(dollar,DbType.postgresql,0,1).contains("$tag$a; 'b'\\c$tag$"))failures.add("dollar literal changed");
         }catch(Exception e){failures.add("dollar: "+e.getMessage());}
+        // DEF-20: a leading comment survives paging verbatim and the result still parses.
+        for(DbType type:List.of(DbType.postgresql,DbType.mysql,DbType.sqlserver)) {
+            for(String head:List.of("/* head */ ","/*x*/","-- line\n","/* a */ /* b */\n")) {
+                try {
+                    String limited=PageUtils.limit(head+"SELECT 1 AS v",type,0,2);
+                    if(!limited.startsWith(head) || org.jumpserver.chen.framework.utils.SqlText.analyze(limited,type).size()!=1)
+                        failures.add(type+" leading comment paging: "+limited);
+                }catch(Exception e){failures.add(type+" leading comment: "+e.getMessage());}
+            }
+        }
+        if(!PageUtils.limit("/*+ hint */ SELECT 1",DbType.postgresql,0,2).startsWith("/*+ hint */"))failures.add("PostgreSQL hint-style comment dropped");
         var commented=SqlScriptParser.parse("# mysql comment\nSELECT 1",DbType.mysql);
         if(!commented.isOk() || !commented.getStatements().get(0).getLeadingKeyword().equals("SELECT"))failures.add("MySQL comment hides script keyword");
         if(!failures.isEmpty())throw new AssertionError(String.join("; ",failures));

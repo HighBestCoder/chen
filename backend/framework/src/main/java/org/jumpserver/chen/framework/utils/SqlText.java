@@ -41,11 +41,41 @@ public final class SqlText {
 
     /** Shield quoted tokens from Druid's dialect-dependent literal re-escaping. */
     public static String rewrite(String sql, DbType type, Function<String, String> rewrite) {
+        // Druid renders a leading comment without its delimiters, which breaks
+        // the rewritten SQL (DEF-20). Rewrite the statement after it and keep
+        // the original comment text in front.
+        int body = leadingCommentsEnd(sql, type);
+        if (body > 0) return sql.substring(0, body) + rewrite(sql.substring(body), type, rewrite);
         var protectedSql = protect(sql, type);
         String output = rewrite.apply(protectedSql.text());
         for (var token : protectedSql.tokens().entrySet()) output = output.replace(token.getKey(), token.getValue());
         if (output.toLowerCase(Locale.ROOT).contains(protectedSql.prefix())) throw new ParserException("SQL rewrite lost an original token");
         return output;
+    }
+
+    /** End of the whitespace and comments before the first token; MySQL hints are not comments. */
+    private static int leadingCommentsEnd(String sql, DbType type) {
+        boolean mysql = type == DbType.mysql || type == DbType.mariadb;
+        int i = 0;
+        while (true) {
+            while (i < sql.length() && Character.isWhitespace(sql.charAt(i))) i++;
+            if (sql.startsWith("--", i) || (mysql && sql.startsWith("#", i))) {
+                int end = sql.indexOf('\n', i);
+                if (end < 0) return 0; // Only a comment: leave the error to the parser.
+                i = end + 1;
+            } else if (sql.startsWith("/*", i) && !(mysql && (sql.startsWith("/*!", i) || sql.startsWith("/*+", i)))) {
+                int depth = 1, j = i + 2;
+                while (j < sql.length() && depth > 0) {
+                    if (sql.startsWith("/*", j)) { depth++; j += 2; }
+                    else if (sql.startsWith("*/", j)) { depth--; j += 2; }
+                    else j++;
+                }
+                if (depth > 0) return 0;
+                i = j;
+            } else {
+                return i == 0 || sql.substring(0, i).isBlank() ? 0 : i;
+            }
+        }
     }
 
     private record ProtectedSql(String text, String prefix, Map<String, String> tokens, List<int[]> positions) {
