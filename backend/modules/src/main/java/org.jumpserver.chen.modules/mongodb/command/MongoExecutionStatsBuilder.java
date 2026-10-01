@@ -38,7 +38,8 @@ public final class MongoExecutionStatsBuilder {
         }
         if (result.isHasResultSet()) {
             List<List<Object>> data = result.getData();
-            stats.setReturnedRows(data == null ? 0L : (long) data.size());
+            stats.setReturnedRows(result.getTrueReturnedRows() >= 0 ? result.getTrueReturnedRows()
+                    : data == null ? 0L : (long) data.size());
             if (result.getTotal() >= 0) {
                 stats.setTotalRows((long) result.getTotal());
             }

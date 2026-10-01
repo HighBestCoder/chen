@@ -59,18 +59,24 @@ public final class MongoQueryLoader implements LoadDataInterface {
                     record.applyACL(expandedAcl);throw new MongoCommandException("Decoded command rejected by ACL");
                 }
             }
-            SQLQueryResult result = actuator.execute(command, params.getOffset(), params.getLimit());
-            if (sink != null && result.isHasResultSet()) {
-                if (result.isTruncated()) {
-                    throw new MongoCommandException("Export exceeds the MongoDB row limit; narrow the query before exporting");
+            // find/aggregate exports stream; other commands keep the bounded in-memory path.
+            SQLQueryResult result = sink != null ? actuator.export(command, sink) : null;
+            if (result != null) {
+                record.setOutput(String.format("Query OK, %d rows  discovered ", result.getTrueReturnedRows()));
+            } else {
+                result = actuator.execute(command, params.getOffset(), params.getLimit());
+                if (sink != null && result.isHasResultSet()) {
+                    if (result.isTruncated()) {
+                        throw new MongoCommandException(MongoResultTableAdapter.EXPORT_LIMIT_MESSAGE);
+                    }
+                    sink.begin(result.getFields());
+                    for (var row : result.getData()) {
+                        sink.accept(row);
+                    }
+                    sink.finish();
                 }
-                sink.begin(result.getFields());
-                for (var row : result.getData()) {
-                    sink.accept(row);
-                }
-                sink.finish();
+                record.setOutput(result);
             }
-            record.setOutput(result);
             record.setExecutionStats(MongoExecutionStatsBuilder.fromSuccess(manager, command, result));
             record.getExecutionStats().setRawCommand(commandText);
             return result;

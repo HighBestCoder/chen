@@ -12,9 +12,11 @@ import com.mongodb.client.result.InsertManyResult;
 import com.mongodb.client.result.UpdateResult;
 import org.bson.Document;
 import org.jumpserver.chen.framework.datasource.entity.resource.Field;
+import org.jumpserver.chen.framework.datasource.sql.RowConsumer;
 import org.jumpserver.chen.framework.datasource.sql.SQLQueryResult;
 import org.jumpserver.chen.modules.mongodb.MongoConnectionManager;
 
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -60,10 +62,37 @@ public class MongoActuator {
             case DROP_COLLECTION -> executeDrop(command);
         };
         } catch (RuntimeException error) {
-            if (org.jumpserver.chen.modules.mongodb.MongoPermissionErrorClassifier.isPermissionDenied(error))
-                throw new org.jumpserver.chen.framework.datasource.error.OperationPermissionDeniedException(error);
-            throw error;
+            throw classify(error);
         }
+    }
+
+    /**
+     * Streams an export-all of a find or a read-only aggregate to {@code sink}
+     * without retaining the documents (DEF-27). Returns null for other command
+     * types, which keep the bounded in-memory path.
+     */
+    public SQLQueryResult export(MongoCommand command, RowConsumer sink) throws SQLException {
+        long start = System.currentTimeMillis();
+        try {
+            if (command.getType() == MongoCommand.Type.FIND) {
+                FindPlan plan = findPlan(command, 0, -1);
+                return adapter.export(command.getRawText(), command.getCollection(), command.getProjection(),
+                        plan.iterable()::iterator, plan.effectiveLimit(), sink, start);
+            }
+            if (command.getType() == MongoCommand.Type.AGGREGATE && !command.writesCollection()) {
+                return adapter.export(command.getRawText(), command.getCollection(), null,
+                        aggregateIterable(command, -1)::iterator, aggregateCap(command, -1), sink, start);
+            }
+            return null;
+        } catch (RuntimeException error) {
+            throw classify(error);
+        }
+    }
+
+    private RuntimeException classify(RuntimeException error) {
+        if (org.jumpserver.chen.modules.mongodb.MongoPermissionErrorClassifier.isPermissionDenied(error))
+            return new org.jumpserver.chen.framework.datasource.error.OperationPermissionDeniedException(error);
+        return error;
     }
 
     private SQLQueryResult unacknowledged(MongoCommand command,long start) {
@@ -185,18 +214,17 @@ public class MongoActuator {
         return result;
     }
 
-    private SQLQueryResult executeFind(MongoCommand command, int offset, int limit) {
-        long start = System.currentTimeMillis();
-        MongoCollection<Document> collection = collectionOf(command);
+    private record FindPlan(FindIterable<Document> iterable, int effectiveLimit, boolean boundedBySafetyCap,
+                            boolean countCompatible) { }
 
-        FindIterable<Document> iterable = collection.find(command.getFilter());
+    private FindPlan findPlan(MongoCommand command, int offset, int limit) {
+        FindIterable<Document> iterable = collectionOf(command).find(command.getFilter());
         if (command.getProjection() != null) {
             iterable = iterable.projection(command.getProjection());
         }
         iterable = iterable.sort(command.getSort() != null ? command.getSort() : STABLE_SORT);
         iterable = MongoOptions.apply(iterable, command.getOptions());
 
-        boolean explicitLimit = command.getLimit() != null;
         // CountOptions cannot express index bounds or let variables. Retain bounded results
         // without publishing a count for a different query.
         boolean countCompatible = !command.getOptions().containsKey("min") && !command.getOptions().containsKey("max") && !command.getOptions().containsKey("let");
@@ -207,6 +235,18 @@ public class MongoActuator {
         boolean boundedBySafetyCap = command.getLimit() == null ? limit < 0 || !countCompatible
                 : command.getLimit() == 0 || command.getLimit() > effectiveLimit;
         iterable = iterable.limit(effectiveLimit + (boundedBySafetyCap ? 1 : 0));
+        return new FindPlan(iterable, effectiveLimit, boundedBySafetyCap, countCompatible);
+    }
+
+    private SQLQueryResult executeFind(MongoCommand command, int offset, int limit) {
+        long start = System.currentTimeMillis();
+        MongoCollection<Document> collection = collectionOf(command);
+        FindPlan plan = findPlan(command, offset, limit);
+        FindIterable<Document> iterable = plan.iterable();
+        int effectiveLimit = plan.effectiveLimit();
+        boolean boundedBySafetyCap = plan.boundedBySafetyCap();
+        boolean countCompatible = plan.countCompatible();
+        boolean explicitLimit = command.getLimit() != null;
 
         List<Document> documents = new ArrayList<>();
         boolean truncated;
@@ -243,31 +283,34 @@ public class MongoActuator {
      * is left untouched — the author's own limit wins, mirroring the
      * manual-limit precedence rule the relational console applies.
      */
-    private SQLQueryResult executeAggregate(MongoCommand command, int limit) {
-        long start = System.currentTimeMillis();
-        MongoCollection<Document> collection = collectionOf(command);
-
+    private AggregateIterable<Document> aggregateIterable(MongoCommand command, int limit) {
         List<Document> pipeline = new ArrayList<>(command.getPipeline());
-        boolean writesCollection = command.writesCollection();
-        if (!writesCollection && (command.getLimit() != null || !hasLimitStage(pipeline))) {
+        if (!command.writesCollection() && (command.getLimit() != null || !hasLimitStage(pipeline))) {
             int resolved = resolveLimit(command.getLimit(), limit);
             boolean boundedByUser = command.getLimit() != null && command.getLimit() > 0 && command.getLimit() <= resolved;
             pipeline.add(new Document(LIMIT_STAGE, resolved + (boundedByUser ? 0 : 1)));
         }
+        return MongoOptions.apply(collectionOf(command).aggregate(pipeline), command.getOptions());
+    }
 
-        AggregateIterable<Document> iterable = collection.aggregate(pipeline);
-        iterable=MongoOptions.apply(iterable,command.getOptions());
-        if (writesCollection) {
+    // An earlier $limit does not bound the output of later $unwind/$unionWith.
+    // Bound retained results independently, without rewriting terminal writes.
+    private int aggregateCap(MongoCommand command, int limit) {
+        return command.getLimit() != null ? resolveLimit(command.getLimit(), limit)
+                : hasLimitStage(command.getPipeline()) ? (limit < 0 ? EXPORT_MAX : MAX_LIMIT) : resolveLimit(null, limit);
+    }
+
+    private SQLQueryResult executeAggregate(MongoCommand command, int limit) {
+        long start = System.currentTimeMillis();
+        AggregateIterable<Document> iterable = aggregateIterable(command, limit);
+        if (command.writesCollection()) {
             iterable.toCollection();
             SQLQueryResult result = writeResult(command.getRawText(), -1, start);
             return result;
         }
         List<Document> documents = new ArrayList<>();
         boolean truncated;
-        // An earlier $limit does not bound the output of later $unwind/$unionWith.
-        // Bound retained results independently, without rewriting terminal writes.
-        int cap = command.getLimit() != null ? resolveLimit(command.getLimit(), limit)
-                : hasLimitStage(command.getPipeline()) ? (limit < 0 ? EXPORT_MAX : MAX_LIMIT) : resolveLimit(null, limit);
+        int cap = aggregateCap(command, limit);
         try (MongoCursor<Document> cursor = iterable.iterator()) {
             while (documents.size() < cap && cursor.hasNext()) {
                 documents.add(cursor.next());

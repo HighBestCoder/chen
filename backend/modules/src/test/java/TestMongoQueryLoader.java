@@ -42,6 +42,8 @@ public class TestMongoQueryLoader {
                     return null;
                 });
         MongoActuator actuator = new MongoActuator(manager) {
+            // Keep this probe on the in-memory export path; TestMongoStreamingExport covers streaming.
+            @Override public SQLQueryResult export(MongoCommand command, RowConsumer sink) { return null; }
             @Override public SQLQueryResult execute(MongoCommand command, int offset, int limit) {
                 calls[0]++;
                 require("original".equals(manager.getCurrentDatabaseName()), "result reload switched database");
@@ -102,6 +104,7 @@ public class TestMongoQueryLoader {
             require(calls[0] == before, "refresh/export must not replay a write");
         }
         var capped = new MongoActuator(manager) {
+            @Override public SQLQueryResult export(MongoCommand command, RowConsumer sink) { return null; }
             @Override public SQLQueryResult execute(MongoCommand command, int offset, int limit) {
                 var result = new MongoResultTableAdapter().toResult(text,List.of(new Document("x",1)),1L,2L);
                 result.setTruncated(true); return result;

@@ -188,6 +188,13 @@ public class MongoSqlActuatorStub implements SQLActuator {
         if (params.getOffset() > 0) {
             iterable = iterable.skip(params.getOffset());
         }
+        if (plan.getRowConsumer() != null && params.getLimit() < 0) {
+            // Export all streams without retaining documents (DEF-27).
+            int cap = resolveLimit(params.getLimit());
+            FindIterable<Document> source = iterable.limit(cap + 1);
+            return this.adapter.export(commandText(collectionName, params.getLimit()), collectionName, null,
+                    source::iterator, cap, plan.getRowConsumer(), start);
+        }
         iterable = iterable.limit(resolveLimit(params.getLimit()));
 
         List<Document> documents = new ArrayList<>();
@@ -205,7 +212,7 @@ public class MongoSqlActuatorStub implements SQLActuator {
 
         result.setTruncated(params.getLimit() < 0 && truncated);
         if (result.isTruncated() && plan.getRowConsumer() != null) {
-            throw new SQLException("Export exceeds the MongoDB row limit; narrow the query before exporting");
+            throw new SQLException(MongoResultTableAdapter.EXPORT_LIMIT_MESSAGE);
         }
         streamRowsIfRequested(result, plan.getRowConsumer());
         return result;
