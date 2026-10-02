@@ -71,7 +71,8 @@ export default {
     Vue.prototype.$get = get
     Vue.prototype.$post = post
     Vue.prototype.$put = put
-    Vue.prototype.$delete = del
+    // Not $delete: that is Vue's reactive property removal, which the console uses.
+    Vue.prototype.$del = del
     Vue.prototype.$request = index
   }
 }
