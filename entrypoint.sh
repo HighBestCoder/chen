@@ -34,4 +34,7 @@ echo "Quit the server with CONTROL-C."
 echo
 
 cd /opt/chen || exit 1
-exec wisp
+# wisp prints its whole configuration at startup, including the component
+# bootstrap token. Mask it in both streams; wisp stays PID 1 (DEF-33).
+mask='s/(BootstrapToken:|BOOTSTRAP_TOKEN=)[^[:space:]}]*/\1******/g'
+exec wisp > >(sed -u -E "$mask") 2> >(sed -u -E "$mask" >&2)
