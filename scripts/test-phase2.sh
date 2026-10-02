@@ -29,7 +29,7 @@ tests=(
   TestSessionBoundaries TestConsoleOrdering TestSessionLifetime TestSessionHttpIntegration TestSessionTaskReconnect
   TestAuditTag TestSqlScriptParserAndValidator
   TestConsoleFiles TestQueryConsoleSecurity
-  TestDataViewColumns TestDataViewExport TestRelationalAuthFlowHandler
+  TestDataViewColumns TestDataViewExport TestRelationalAuthFlowHandler TestPgObjectDisplay
   TestSqlServerAccessTokenBridge TestSslPropsDerivation
 )
 failed=0

@@ -288,22 +288,7 @@ public abstract class BaseSQLActuator implements SQLActuator {
                     List<Object> fs = new ArrayList<>();
                     for (int i = 1; i <= columnCount; i++) {
                         try {
-                            var obj = resultSet.getObject(i);
-                            if (obj instanceof Timestamp timestamp) {
-                                fs.add(timestamp.toString());
-                            } else if (obj instanceof java.time.LocalDateTime timestamp) {
-                                fs.add(Timestamp.valueOf(timestamp).toString());
-                            } else if (obj instanceof Long l) {
-                                fs.add(l.toString());
-                            } else if (obj instanceof java.math.BigDecimal decimal) {
-                                fs.add(decimal.toPlainString());
-                            } else if (obj instanceof BigInteger b) {
-                                fs.add(b.toString());
-                            } else if (obj instanceof byte[]) {
-                                fs.add(HexUtils.bytesToHex((byte[]) obj));
-                            } else {
-                                fs.add(obj);
-                            }
+                            fs.add(displayValue(resultSet.getObject(i)));
                         } catch (NoClassDefFoundError e) {
                             log.error(e.getMessage());
                         }
@@ -601,5 +586,21 @@ public abstract class BaseSQLActuator implements SQLActuator {
 
     private Connection getConnection() throws SQLException {
         return this.connection != null ? this.connection : this.connectionManager.getConnection();
+    }
+
+    /** Result values as the console shows and exports them. */
+    public static Object displayValue(Object obj) {
+        if (obj instanceof Timestamp timestamp) return timestamp.toString();
+        if (obj instanceof java.time.LocalDateTime timestamp) return Timestamp.valueOf(timestamp).toString();
+        if (obj instanceof Long l) return l.toString();
+        if (obj instanceof java.math.BigDecimal decimal) return decimal.toPlainString();
+        if (obj instanceof BigInteger b) return b.toString();
+        if (obj instanceof byte[] bytes) return HexUtils.bytesToHex(bytes);
+        // inet, json, interval and other PostgreSQL types arrive as PGobject,
+        // which the console rendered as [object Object] (DEF-32).
+        for (Class<?> type = obj == null ? null : obj.getClass(); type != null; type = type.getSuperclass()) {
+            if (type.getName().equals("org.postgresql.util.PGobject")) return obj.toString();
+        }
+        return obj;
     }
 }
