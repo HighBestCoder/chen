@@ -79,6 +79,7 @@ public class JmsSessionService implements SessionService {
             var next = matches.get(0).getSettingsMap();
             if (!id.equals(next.get("chen_session_id")) || !"true".equals(next.get("chen_session_valid")))
                 throw new IllegalStateException("Session authorization revoked");
+            if ("true".equals(next.get("chen_target_changed"))) session.warnTargetChanged();
             return "true".equals(next.get("chen_download_allowed"));
         });
     }

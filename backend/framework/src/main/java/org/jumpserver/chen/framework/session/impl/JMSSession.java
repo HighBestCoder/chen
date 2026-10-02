@@ -73,6 +73,26 @@ public class JMSSession extends BaseSession {
         }
     }
 
+    private volatile boolean targetChangeWarned;
+
+    /**
+     * Core reports that the asset's address changed after this session
+     * connected. The open connection keeps its original target, so ask the
+     * user once to reconnect; the session itself stays usable (DEF-31).
+     * Called from the authorization check, so it must never throw.
+     */
+    public void warnTargetChanged() {
+        if (targetChangeWarned) return;
+        targetChangeWarned = true;
+        String previous = SessionManager.getContextToken();
+        SessionManager.setContext(this.getWebToken());
+        try {
+            this.getController().showMessage(MessageLevel.WARNING, MessageUtils.get("msg.dialog.target_changed"));
+        } catch (RuntimeException ignored) {
+            // A missing console must not turn a valid session into a denied one.
+        } finally { SessionManager.setContext(previous); }
+    }
+
     private boolean canCopy = false;
     private boolean canPaste = false;
 
