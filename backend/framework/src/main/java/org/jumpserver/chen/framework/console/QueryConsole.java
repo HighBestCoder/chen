@@ -42,6 +42,7 @@ public class QueryConsole extends AbstractConsole {
 
     private final Datasource datasource;
     private Connection conn;
+    private volatile boolean closed;
     private Integer selectedLimit;
     private volatile SQLExecutePlan currentPlan;
     private StateManager<QueryConsoleState> stateManager;
@@ -105,12 +106,27 @@ public class QueryConsole extends AbstractConsole {
     }
 
     private Connection getConnection() {
-        if (this.conn == null) {
-            try {
-                this.conn = this.getDatasource().getConnectionManager().getPhysicalConnection();
-            } catch (SQLException e) {
-                throw new RuntimeException(e);
+        try {
+            boolean lost = false;
+            if (this.closed) throw new SQLException("Console is closed");
+            if (this.conn != null && this.conn.isClosed()) {
+                // The server ended the connection (admin kill, failover, idle cut). Without this the console and its
+                // result views kept failing with "connection has been closed" until the tab was reopened (LIM-07).
+                lost = true;
+                this.conn = null;
             }
+            if (this.conn == null) {
+                this.conn = this.getDatasource().getConnectionManager().getPhysicalConnection();
+                if (lost) {
+                    String context = this.getState().getCurrentContext();
+                    if (context != null && !context.equals(this.getSqlActuator().getCurrentSchema())) {
+                        this.getSqlActuator().changeSchema(context);
+                    }
+                    this.getConsoleLogger().warn("Database connection was closed; reconnected (context %s)", context);
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
         }
         return this.conn;
     }
@@ -399,6 +415,8 @@ public class QueryConsole extends AbstractConsole {
                 }
             }
             sqlQueryParams.setTimeout(this.getState().getTimeout());
+            // A reload runs on the console's current connection; the one the plan was built with may have been closed.
+            if (!initial) plan.setConnection(this.getConnection());
 
             plan.setSqlQueryParams(sqlQueryParams);
             plan.setRowConsumer(sink);
@@ -459,6 +477,7 @@ public class QueryConsole extends AbstractConsole {
 
     @Override
     public void close() {
+        this.closed = true;
         try {
             var plan = this.currentPlan;
             if (plan != null) plan.cancel();

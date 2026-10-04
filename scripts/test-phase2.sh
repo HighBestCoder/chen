@@ -28,7 +28,7 @@ tests=(
   TestConnectionAuthBoundaries TestConnectionCreationCleanup TestConnectionConfiguration TestConnectionConfigurationBaseline
   TestSessionBoundaries TestConsoleOrdering TestSessionLifetime TestSessionHttpIntegration TestSessionTaskReconnect
   TestAuditTag TestSqlScriptParserAndValidator
-  TestConsoleFiles TestQueryConsoleSecurity
+  TestConsoleFiles TestQueryConsoleSecurity TestConsoleReconnect
   TestDataViewColumns TestDataViewExport TestRelationalAuthFlowHandler TestPgObjectDisplay
   TestSqlServerAccessTokenBridge TestSslPropsDerivation
 )

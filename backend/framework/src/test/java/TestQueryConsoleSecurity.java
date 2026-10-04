@@ -46,7 +46,7 @@ public class TestQueryConsoleSecurity {
             default -> null;
         });
         String token=SessionManager.registerSession(session); SessionManager.setContext(token);
-        Connection conn=proxy(Connection.class,(p,m,v)->null);
+        Connection conn=proxy(Connection.class,(p,m,v)->m.getName().equals("isClosed")?false:null);
         SQLActuator[] actuator={null};
         actuator[0]=proxy(SQLActuator.class,(p,m,v)->switch(m.getName()) {
             case "withConnection" -> actuator[0];
