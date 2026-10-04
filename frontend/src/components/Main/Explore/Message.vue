@@ -32,6 +32,12 @@ export default {
   },
   mounted() {
     this.subscription = this.subject.subscribe((data) => {
+      // A new execution clears the previous alert so an old error is not shown next to a fresh result.
+      if (data.close) {
+        clearTimeout(this.dismissTimer)
+        this.opened = false
+        return
+      }
       this.title = data.title
       this.message = data.message
       this.type = data.type
