@@ -195,9 +195,12 @@ public class QueryConsole extends AbstractConsole {
             this.getPacketIO().sendPacket("update_data_view", new UpdateDataView(action.getDataView(), dataView.getData()));
 
         } catch (SQLException e) {
-            this.getMessager().send(Message.error(MessageUtils.get("msg.error.fetch_error"), e));
-            // Keep a trace in Log Output too: the alert alone left no record of a failed refresh/limit/export (DEF-40).
-            this.getConsoleLogger().error(MessageUtils.get("msg.error.fetch_error") + ": %s", e.getMessage());
+            Message message = Message.error(MessageUtils.get("msg.error.fetch_error"), e);
+            this.getMessager().send(message);
+            // Keep a trace in Log Output too (DEF-40). Log what the alert shows, so a permission error stays the
+            // unified text and the raw database error is not echoed (ACL-08).
+            this.getConsoleLogger().error("%s", message.getTitle().equals(message.getMessage())
+                    ? message.getTitle() : message.getTitle() + ": " + message.getMessage());
         } finally {
             dataView.getStateManager().getState().setLoading(false);
             dataView.getStateManager().commit();

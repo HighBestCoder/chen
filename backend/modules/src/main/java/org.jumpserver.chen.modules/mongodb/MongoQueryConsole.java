@@ -233,8 +233,11 @@ public class MongoQueryConsole extends AbstractConsole {
             selectedLimit = dataView.getStateManager().getState().getLimit();
             this.getPacketIO().sendPacket("update_data_view", new UpdateDataView(action.getDataView(), dataView.getData()));
         } catch (Exception e) {
-            this.getMessager().send(Message.error("Fetch error", e));
-            this.getConsoleLogger().error("Fetch error: %s", e.getMessage());   // DEF-40: leave a trace in Log Output
+            Message message = Message.error("Fetch error", e);
+            this.getMessager().send(message);
+            // DEF-40: leave a trace in Log Output, with the same text as the alert (no raw error for permission denials).
+            this.getConsoleLogger().error("%s", message.getTitle().equals(message.getMessage())
+                    ? message.getTitle() : message.getTitle() + ": " + message.getMessage());
         } finally {
             dataView.getStateManager().getState().setLoading(false);
             dataView.getStateManager().commit();
