@@ -162,7 +162,6 @@ export default {
           break
         case 'update_state':
           if (pkt.data.title === this.tab.title) {
-            if (pkt.data.inQuery && !this.state.inQuery) this.subjects.messageSubject.next({ close: true })
             this.state = pkt.data
           } else {
             const prev = this.resultStates[pkt.data.title]

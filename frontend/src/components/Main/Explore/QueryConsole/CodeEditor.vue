@@ -273,6 +273,8 @@ export default {
         return
       }
       this.state.inQuery = true
+      // inQuery is set here, before the server's update_state, so the old alert is cleared at the click.
+      this.subjects.messageSubject.next({ close: true })
       this.$emit('action', { action: 'run_sql', data: sql })
     },
     onStop() {
