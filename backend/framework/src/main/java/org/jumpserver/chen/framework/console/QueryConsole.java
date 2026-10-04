@@ -196,6 +196,8 @@ public class QueryConsole extends AbstractConsole {
 
         } catch (SQLException e) {
             this.getMessager().send(Message.error(MessageUtils.get("msg.error.fetch_error"), e));
+            // Keep a trace in Log Output too: the alert alone left no record of a failed refresh/limit/export (DEF-40).
+            this.getConsoleLogger().error(MessageUtils.get("msg.error.fetch_error") + ": %s", e.getMessage());
         } finally {
             dataView.getStateManager().getState().setLoading(false);
             dataView.getStateManager().commit();

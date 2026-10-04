@@ -223,6 +223,9 @@ public class DataView extends SQLResult {
 
                 final BufferedWriter w = writer;
                 final long[] written = {0};
+                // query.export-max-rows was configured but never enforced, so SQL exports had no ceiling (DEF-41).
+                // Stop at the limit; the catch below deletes the partial file and reports the refusal.
+                final int exportMax = org.jumpserver.chen.framework.policy.QueryPolicyHolder.current().getExportMaxRows();
 
                 this.loadDataInterface.loadData(queryParams, new RowConsumer() {
                     private List<Field> fields;
@@ -239,6 +242,10 @@ public class DataView extends SQLResult {
 
                     @Override
                     public void accept(List<Object> row) throws SQLException {
+                        if (exportMax > 0 && written[0] >= exportMax) {
+                            throw new SQLException(String.format(
+                                    "Export exceeds the configured maximum of %d rows; narrow the query before exporting", exportMax));
+                        }
                         try {
                             writeRow(w, this.fields, row);
                         } catch (IOException e) {

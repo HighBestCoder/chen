@@ -128,8 +128,13 @@ public class ConsoleWebSocketHandler extends TextWebSocketHandler {
         SessionManager.setContext(token);
         try {
             var session = SessionManager.getCurrentSession();
-            if (!socket.isOpen() || session == null || !session.isActive()) return;
-            if (!cancel && session instanceof org.jumpserver.chen.framework.session.impl.JMSSession jms && !jms.allowsExecution()) {
+            if (!socket.isOpen() || session == null) return;
+            // A locked, idle or expired session must answer the request: returning silently left the
+            // console spinning with no reason, and still spinning after an admin unlock (DEF-38).
+            if (!session.isActive() || (!cancel && session instanceof org.jumpserver.chen.framework.session.impl.JMSSession jms
+                    && !jms.allowsExecution())) {
+                // Heartbeats keep their old silent behaviour so a locked console is not flooded with alerts.
+                if (cancel || "ping".equals(packet.getType())) return;
                 new org.jumpserver.chen.framework.ws.io.PacketIO(socket).sendPacket("message",
                         org.jumpserver.chen.framework.console.entity.response.Message.error("Operation denied", "Session locked or expired"));
                 return;

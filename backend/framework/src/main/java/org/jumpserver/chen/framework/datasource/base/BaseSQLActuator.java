@@ -584,7 +584,7 @@ public abstract class BaseSQLActuator implements SQLActuator {
         plan.setConnection(this.getConnection());
     }
 
-    private Connection getConnection() throws SQLException {
+    protected Connection getConnection() throws SQLException {
         return this.connection != null ? this.connection : this.connectionManager.getConnection();
     }
 

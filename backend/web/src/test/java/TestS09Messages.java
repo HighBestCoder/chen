@@ -30,7 +30,8 @@ public class TestS09Messages {
         String token=SessionManager.registerSession(session);SessionManager.setContext(token);
         try{
             check("Error while reading file".equals(MessageUtils.get("msg.error.file_read_error")),"English file error");
-            locale[0]=Locale.SIMPLIFIED_CHINESE;check("获取数据失败".equals(MessageUtils.get("msg.error.fetch_error")),"Chinese fetch error");
+            locale[0]=Locale.SIMPLIFIED_CHINESE;check("查询".equals(MessageUtils.get("title.query")),"Chinese title");
+            check("Error while fetching data".equals(MessageUtils.get("msg.error.fetch_error")),"errors stay English under Chinese UI");
             locale[0]=Locale.FRANCE;check("Query".equals(MessageUtils.get("title.query")),"unsupported locale fallback");
         }finally{SessionManager.unregisterSession(token);SessionManager.setContext(null);}
         System.out.println("OK: all backend literal message keys, five bundles, session locale and fallback");

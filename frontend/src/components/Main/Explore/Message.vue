@@ -36,7 +36,9 @@ export default {
       this.message = data.message
       this.type = data.type
       this.opened = true
-      this.closeDelay = data.closeDelay == null ? 5 : data.closeDelay
+      // Errors stay until the user closes them: a 5-second alert vanished while the stale result
+      // stayed in front, so a failed refresh/limit change/export looked like success (DEF-37/DEF-40).
+      this.closeDelay = data.closeDelay != null ? data.closeDelay : (data.type === 'error' ? 0 : 5)
 
       clearTimeout(this.dismissTimer)
       if (this.closeDelay > 0) {

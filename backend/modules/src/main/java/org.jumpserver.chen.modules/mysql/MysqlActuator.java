@@ -31,7 +31,10 @@ public class MysqlActuator extends BaseSQLActuator {
 
     @Override
     public void changeSchema(String schema) throws SQLException {
-        this.execute(SQL.of("USE " + quoteIdentifier(schema)));
+        // setCatalog sends the database change and updates the driver's cached catalog; a plain
+        // "USE" statement left getCatalog() on the initial database, so audit namespaces stayed wrong (DEF-36).
+        if (schema == null) throw new IllegalArgumentException("Missing database identifier");
+        this.getConnection().setCatalog(schema);
     }
 
 

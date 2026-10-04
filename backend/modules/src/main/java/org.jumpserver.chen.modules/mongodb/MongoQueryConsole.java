@@ -61,8 +61,17 @@ public class MongoQueryConsole extends AbstractConsole {
         this.getState().setLoading(true);
         this.stateManager.commit();
         try {
-            this.getState().setContexts(this.connectionManager.listDatabases());
-            this.getState().setCurrentContext(this.connectionManager.getCurrentDatabaseName());
+            var databases = this.connectionManager.listDatabases();
+            var current = this.connectionManager.getCurrentDatabaseName();
+            this.getState().setContexts(databases);
+            this.getState().setCurrentContext(current);
+            // MongoDB creates a database on first write, so a mistyped initial database still "connects".
+            // Say so instead of silently opening an empty console (DEF-35); the connection is not blocked.
+            if (current != null && !current.isEmpty() && !databases.contains(current)) {
+                this.getConsoleLogger().warn(
+                        "Database %s does not exist yet; it will be created on the first write. Check the asset's database name if this is unexpected.",
+                        current);
+            }
         } catch (RuntimeException e) {
             this.getConsoleLogger().error("connect error: %s", e.getMessage());
         }
@@ -225,6 +234,7 @@ public class MongoQueryConsole extends AbstractConsole {
             this.getPacketIO().sendPacket("update_data_view", new UpdateDataView(action.getDataView(), dataView.getData()));
         } catch (Exception e) {
             this.getMessager().send(Message.error("Fetch error", e));
+            this.getConsoleLogger().error("Fetch error: %s", e.getMessage());   // DEF-40: leave a trace in Log Output
         } finally {
             dataView.getStateManager().getState().setLoading(false);
             dataView.getStateManager().commit();

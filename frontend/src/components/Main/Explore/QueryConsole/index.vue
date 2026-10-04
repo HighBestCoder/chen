@@ -152,6 +152,10 @@ export default {
         }
         case 'message':
           this.subjects.messageSubject.next(pkt.data)
+          // A denied request (locked/expired session) gets no update_state, so release the editor here (DEF-38).
+          if (pkt.data && pkt.data.title === 'Operation denied') {
+            this.state = { ...this.state, inQuery: false, loading: false }
+          }
           break
         case 'query_console_action':
           this.subjects.eventSubject.next(pkt.data)

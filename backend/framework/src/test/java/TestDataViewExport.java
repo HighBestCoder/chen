@@ -77,7 +77,40 @@ public class TestDataViewExport {
             require(!Files.exists(files.get(1)) && downloads.size() == 1,
                     "failed export left a partial downloadable file");
             require(records.size() == 3 && records.get(2).isError(), "failed export missing audit");
-            System.out.println("OK: streamed CSV header/data and denied download side effects");
+            // DEF-41: export-max-rows must stop an export-all instead of writing every row.
+            var previous = org.jumpserver.chen.framework.policy.QueryPolicyHolder.current();
+            var capped = new org.jumpserver.chen.framework.policy.QueryPolicy();
+            capped.setExportMaxRows(3);
+            org.jumpserver.chen.framework.policy.QueryPolicyHolder.install(capped);
+            try {
+                view.setLoadDataInterface((params, sink) -> {
+                    sink.begin(List.of(first));
+                    for (int i = 0; i < 5; i++) sink.accept(List.of("row" + i));
+                    sink.finish();
+                    return new SQLQueryResult("test");
+                });
+                try {
+                    view.export("all");
+                    throw new AssertionError("export over export-max-rows reported success");
+                } catch (java.sql.SQLException expectedFailure) {
+                    require(expectedFailure.getMessage().contains("configured maximum of 3 rows"),
+                            "over-limit export must explain the limit: " + expectedFailure.getMessage());
+                }
+                require(!Files.exists(files.get(files.size() - 1)) && downloads.size() == 1,
+                        "over-limit export left a downloadable file");
+                require(records.get(records.size() - 1).isError(), "over-limit export missing audit");
+                view.setLoadDataInterface((params, sink) -> {
+                    sink.begin(List.of(first));
+                    for (int i = 0; i < 3; i++) sink.accept(List.of("row" + i));
+                    sink.finish();
+                    return new SQLQueryResult("test");
+                });
+                view.export("all");
+                require(downloads.size() == 2, "export exactly at export-max-rows must succeed");
+            } finally {
+                org.jumpserver.chen.framework.policy.QueryPolicyHolder.install(previous);
+            }
+            System.out.println("OK: streamed CSV header/data, denied download side effects and export-max-rows");
         } finally {
             SessionManager.unregisterSession(token);
             SessionManager.setContext(null);
