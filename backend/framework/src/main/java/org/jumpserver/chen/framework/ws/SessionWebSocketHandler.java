@@ -56,7 +56,9 @@ public class SessionWebSocketHandler extends TextWebSocketHandler {
                 dialog.setTitle(MessageUtils.get("msg.dialog.title.init_datasource_failed"));
                 // Driver errors are untrusted text, never HTML.
                 dialog.setBodyType("text");
-                dialog.setBody(MessageUtils.get("msg.dialog.message.init_datasource_failed") + ": " + e.getMessage());
+                dialog.setBody(MessageUtils.get("msg.dialog.message.init_datasource_failed") + ": "
+                        + org.jumpserver.chen.framework.datasource.error.ConnectionFailureReason.describe(e));
+                log.warn("Initialize datasource failed", e);
                 session.getController().showDialog(dialog);
                 session.close();
                 return;

@@ -79,7 +79,7 @@ public class DataView extends SQLResult {
                 this.getStateManager().getState().setPinned(!this.getStateManager().getState().isPinned());
             }
             case DataViewAction.ACTION_CHANGE_LIMIT -> {
-                this.changeLimit((int) action.getData());
+                this.changeLimit(limitValue(action.getData()));
             }
             case DataViewAction.ACTION_EXPORT -> {
                 this.export(action.getData());
@@ -434,6 +434,19 @@ public class DataView extends SQLResult {
     private int effectiveDisplayLimit() {
         return Math.min(this.state.getMaxDisplayLimit(),
                 org.jumpserver.chen.framework.policy.QueryPolicyHolder.current().getMaxRows());
+    }
+
+    /**
+     * A limit from the wire is a JSON number of any size. Values outside int (e.g. 2147483648 arrives as Long)
+     * used to fail the (int) cast with an uncaught ClassCastException and no reply (OBS-11); reject them with
+     * the same message as any other out-of-range limit.
+     */
+    static int limitValue(Object data) throws SQLException {
+        if (data instanceof Integer || data instanceof Long || data instanceof Short || data instanceof Byte) {
+            long value = ((Number) data).longValue();
+            if (value >= Integer.MIN_VALUE && value <= Integer.MAX_VALUE) return (int) value;
+        }
+        throw new SQLException("Display limit exceeds the configured maximum");
     }
 
     public void changeLimit(int limit) throws SQLException {

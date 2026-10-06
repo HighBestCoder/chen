@@ -71,7 +71,6 @@ public class DataViewConsole extends AbstractConsole {
     @Override
     public void handle(Packet packet) {
         switch (packet.getType()) {
-            case "ping" -> this.getPacketIO().sendPacket("pong", null);
             case Packet.TYPE_DATA_VIEW_ACTION -> {
                 var action = JSON.parseObject(JSON.toJSONString(packet.getData()), DataViewAction.class);
                 this.onDataViewAction(action);

@@ -97,7 +97,8 @@ public class QueryConsole extends AbstractConsole {
             this.getState().setCurrentContext(context);
 
         } catch (SQLException e) {
-            this.getConsoleLogger().error(MessageUtils.get("msg.error.connect_error") + ": %s", e.getMessage());
+            this.getConsoleLogger().error(MessageUtils.get("msg.error.connect_error") + ": %s",
+                    org.jumpserver.chen.framework.datasource.error.ConnectionFailureReason.describe(e));
         }
 
         this.getState().setLoading(false);
@@ -136,7 +137,6 @@ public class QueryConsole extends AbstractConsole {
     public void handle(Packet packet) {
 
         switch (packet.getType()) {
-            case "ping" -> this.getPacketIO().sendPacket("pong", null);
             case "close_data_view" -> {
                 var name = (String) packet.getData();
                 this.dataViews.remove(name);

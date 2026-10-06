@@ -65,6 +65,7 @@ export default {
       store,
       instanceDialogVisible: false,
       heartBeatInterval: 0,
+      clockOffset: null,
       resultStates: {},
       ws: null,
       state: {
@@ -128,6 +129,10 @@ export default {
     handleWSMessage(pkt) {
       switch (pkt.type) {
         case 'pong':
+          // Server time minus local time, corrected by half the round trip (OBS-09).
+          if (pkt.data && pkt.data.s && pkt.data.t) {
+            this.clockOffset = pkt.data.s - (pkt.data.t + (Date.now() - pkt.data.t) / 2)
+          }
           break
         case 'init':
           this.tab.title = pkt.data.title
@@ -174,12 +179,19 @@ export default {
     },
     startHeartBeat() {
       clearInterval(this.heartBeatInterval)
-      this.heartBeatInterval = setInterval(() => {
-        if (this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: 'ping' }))
-      }, 1000 * 10)
+      const ping = () => {
+        if (this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: 'ping', data: { t: Date.now() }}))
+      }
+      ping()
+      this.heartBeatInterval = setInterval(ping, 1000 * 10)
     },
     onEditorAction(action) {
       if (this.state.disconnected) return
+      // Stamp executions with the click time in server time so a command held back by a network stall is
+      // rejected instead of running late (OBS-09). Without an offset yet, send none rather than guess.
+      if ((action.action === 'run_sql' || action.action === 'run_sql_file') && this.clockOffset !== null) {
+        action = { ...action, sentAt: Math.round(Date.now() + this.clockOffset) }
+      }
       this.ws.send(JSON.stringify({ type: 'query_console_action', data: action }))
     },
     onDataViewAction(action) {

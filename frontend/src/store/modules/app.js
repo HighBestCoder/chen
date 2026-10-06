@@ -1,6 +1,6 @@
 import { auth, getProfile } from '@/api/app'
 import { Message } from 'element-ui'
-import i18n from '@/i18n'
+import i18n, { getLanguage, setLanguage } from '@/i18n'
 
 const guards = {}
 function updateClipboardGuard(event, denied) {
@@ -40,7 +40,10 @@ const mutations = {
     state.authenticated = true
     state.token = authResponse.token
     state.lang = authResponse.lang
+    // Switch the running page too; only writing localStorage left this console in the previous
+    // language while the next console opened in the new one (OBS-07).
     localStorage.setItem('chen_language', authResponse.lang)
+    setLanguage(getLanguage())
   },
   PROFILE: (state, profile) => {
     state.profile = profile

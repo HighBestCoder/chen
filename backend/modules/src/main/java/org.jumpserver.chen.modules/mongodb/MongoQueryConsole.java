@@ -90,7 +90,6 @@ public class MongoQueryConsole extends AbstractConsole {
             this.connectionManager.setDatabaseContext(selected);
         }
         switch (packet.getType()) {
-            case "ping" -> this.getPacketIO().sendPacket("pong", null);
             case "close_data_view" -> this.dataViews.remove((String) packet.getData());
             case Packet.TYPE_QUERY_CONSOLE_ACTION -> {
                 var action = JSON.parseObject(JSON.toJSONString(packet.getData()), QueryConsoleAction.class);

@@ -21,6 +21,7 @@ import java.util.concurrent.Executors;
 
 @Slf4j
 public class ConsoleWebSocketHandler extends TextWebSocketHandler {
+    private static final long LATE_COMMAND_MS = 10_000;
     private final ExecutorService executor = Executors.newFixedThreadPool(10, runnable -> {
         Thread thread = new Thread(runnable, "chen-console");
         thread.setDaemon(true);
@@ -96,9 +97,31 @@ public class ConsoleWebSocketHandler extends TextWebSocketHandler {
             return;
         }
 
+        long receivedAt = System.currentTimeMillis();
+        if ("ping".equals(packet.getType())) {
+            // Answer heartbeats on arrival, not behind a running query: the console derives its clock offset
+            // from this reply, and a queued pong would skew it by the queue time (OBS-09).
+            var ping = packet.getData() == null ? null : JSON.parseObject(JSON.toJSONString(packet.getData()));
+            new org.jumpserver.chen.framework.ws.io.PacketIO(socket).sendPacket("pong",
+                    java.util.Map.of("t", ping == null || ping.getLong("t") == null ? 0L : ping.getLong("t"), "s", receivedAt));
+            return;
+        }
         if ("query_console_action".equals(packet.getType()) && packet.getData() != null) {
             var action = JSON.parseObject(JSON.toJSONString(packet.getData()));
-            if ("run_sql".equals(action.getString("action")) && action.getString("data") != null
+            String name = action.getString("action");
+            Long sentAt = action.getLong("sentAt");
+            // sentAt is the click time converted to server time by the console. A command held back by a network
+            // stall (TCP still open) must not run seconds later as if just clicked (OBS-09).
+            if (("run_sql".equals(name) || "run_sql_file".equals(name)) && sentAt != null
+                    && receivedAt - sentAt > LATE_COMMAND_MS) {
+                log.warn("Rejected late command: arrived {} ms after it was sent", receivedAt - sentAt);
+                new org.jumpserver.chen.framework.ws.io.PacketIO(socket).sendPacket("message",
+                        org.jumpserver.chen.framework.console.entity.response.Message.error("Operation denied",
+                                "The command arrived " + (receivedAt - sentAt) / 1000 + " s after it was sent (network interruption) "
+                                        + "and was not executed. Check the current state and run it again."));
+                return;
+            }
+            if ("run_sql".equals(name) && action.getString("data") != null
                     && action.getString("data").getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 256 * 1024) {
                 new org.jumpserver.chen.framework.ws.io.PacketIO(socket).sendPacket("message",
                         org.jumpserver.chen.framework.console.entity.response.Message.error("Command too large", "Maximum command size is 256 KiB UTF-8."));
@@ -133,8 +156,7 @@ public class ConsoleWebSocketHandler extends TextWebSocketHandler {
             // console spinning with no reason, and still spinning after an admin unlock (DEF-38).
             if (!session.isActive() || (!cancel && session instanceof org.jumpserver.chen.framework.session.impl.JMSSession jms
                     && !jms.allowsExecution())) {
-                // Heartbeats keep their old silent behaviour so a locked console is not flooded with alerts.
-                if (cancel || "ping".equals(packet.getType())) return;
+                if (cancel) return;
                 new org.jumpserver.chen.framework.ws.io.PacketIO(socket).sendPacket("message",
                         org.jumpserver.chen.framework.console.entity.response.Message.error("Operation denied", "Session locked or expired"));
                 return;
