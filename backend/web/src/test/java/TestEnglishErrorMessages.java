@@ -21,7 +21,8 @@ public class TestEnglishErrorMessages {
                 locale.set(language);
                 for (String key : ResourceBundle.getBundle("i18n/chen", language).keySet()) {
                     if (!(key.startsWith("msg.error.") || key.endsWith("init_datasource_failed")
-                            || key.equals("msg.dialog.title.error_message") || key.equals("msg.dialog.session_locked"))) continue;
+                            || key.equals("msg.dialog.title.error_message") || key.equals("msg.dialog.session_locked")
+                            || key.equals("msg.dialog.session_unlocked"))) continue;
                     String actual = MessageUtils.get(key, 5, 5);
                     String expected = String.format(Locale.US, source.getMessage(key, null, Locale.US), 5, 5);
                     if (!actual.equals(expected) || actual.matches(".*\\p{IsHan}.*") || actual.equals(key))

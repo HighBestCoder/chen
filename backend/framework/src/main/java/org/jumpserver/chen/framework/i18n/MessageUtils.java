@@ -19,7 +19,10 @@ public class MessageUtils {
         try {
             // Customer-facing errors must remain English regardless of the UI language.
             boolean error = msgKey.startsWith("msg.error.") || msgKey.endsWith("init_datasource_failed")
-                    || msgKey.equals("msg.dialog.title.error_message") || msgKey.equals("msg.dialog.session_locked");
+                    || msgKey.equals("msg.dialog.title.error_message") || msgKey.equals("msg.dialog.session_locked")
+                    // The unlock notice pairs with the lock notice; it was shown in the UI language while the
+                    // lock notice was English (RUN-261002 OBS-07).
+                    || msgKey.equals("msg.dialog.session_unlocked");
             var locale = error ? java.util.Locale.US : SessionManager.getCurrentSession().getLocale();
             var text = messageSource.getMessage(msgKey, null, locale);
             return String.format(locale, text, args);
