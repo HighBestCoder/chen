@@ -231,7 +231,7 @@ public class MongoSqlActuatorStub implements SQLActuator {
 
     private int resolveLimit(int requested) {
         if (requested < 0) {
-            return EXPORT_MAX;
+            return org.jumpserver.chen.modules.mongodb.command.MongoActuator.exportMax();
         }
         return requested > 0 ? Math.min(requested, EXPORT_MAX) : 50;
     }

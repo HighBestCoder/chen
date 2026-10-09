@@ -48,6 +48,26 @@ public class TestMongoStreamingExport {
         Sink empty = new Sink();
         adapter.export("q", "c", new Document("name", 1), cursors(List::of, new int[1]), 5, empty, 1L);
         require(empty.header.equals(List.of("name")) && empty.rows.isEmpty(), "empty export keeps projected columns");
+        // query.export-max-rows bounds Mongo exports like SQL ones; paging keeps its own ceiling.
+        var previous = org.jumpserver.chen.framework.policy.QueryPolicyHolder.current();
+        var capped = new org.jumpserver.chen.framework.policy.QueryPolicy();
+        capped.setExportMaxRows(3);
+        org.jumpserver.chen.framework.policy.QueryPolicyHolder.install(capped);
+        try {
+            require(org.jumpserver.chen.modules.mongodb.command.MongoActuator.exportMax() == 3, "export cap follows export-max-rows");
+            var actuatorLimit = org.jumpserver.chen.modules.mongodb.command.MongoActuator.class
+                    .getDeclaredMethod("resolveLimit", Integer.class, int.class);
+            actuatorLimit.setAccessible(true);
+            var actuator = allocate(org.jumpserver.chen.modules.mongodb.command.MongoActuator.class);
+            require((int) actuatorLimit.invoke(actuator, null, -1) == 3, "find export-all capped by export-max-rows");
+            var stubLimit = org.jumpserver.chen.modules.mongodb.MongoSqlActuatorStub.class.getDeclaredMethod("resolveLimit", int.class);
+            stubLimit.setAccessible(true);
+            var stub = allocate(org.jumpserver.chen.modules.mongodb.MongoSqlActuatorStub.class);
+            require((int) stubLimit.invoke(stub, -1) == 3, "stub export-all capped by export-max-rows");
+            require((int) stubLimit.invoke(stub, 500) == 500, "paging limit not tied to export-max-rows");
+        } finally {
+            org.jumpserver.chen.framework.policy.QueryPolicyHolder.install(previous);
+        }
         System.out.println("TestMongoStreamingExport: OK");
     }
 
@@ -66,6 +86,12 @@ public class TestMongoStreamingExport {
         };
     }
 
+    /** Instance without running the constructor (no Mongo connection needed for the limit helpers). */
+    private static <T> T allocate(Class<T> type) throws Exception {
+        var field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        field.setAccessible(true);
+        return type.cast(((sun.misc.Unsafe) field.get(null)).allocateInstance(type));
+    }
     private interface Action { void run() throws Exception; }
 
     private static void expectFailure(Action action, String message) throws Exception {

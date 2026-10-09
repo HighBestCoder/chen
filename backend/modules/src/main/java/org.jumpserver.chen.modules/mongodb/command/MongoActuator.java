@@ -24,7 +24,6 @@ public class MongoActuator {
 
     private static final int DEFAULT_LIMIT = 100;
     private static final int MAX_LIMIT = 1000;
-    private static final int EXPORT_MAX = 100_000;
     private static final Document STABLE_SORT = new Document("_id", 1);
     private static final String LIMIT_STAGE = "$limit";
 
@@ -293,11 +292,16 @@ public class MongoActuator {
         return MongoOptions.apply(collectionOf(command).aggregate(pipeline), command.getOptions());
     }
 
+    /** query.export-max-rows, the same export ceiling the SQL consoles enforce (default 100,000). */
+    public static int exportMax() {
+        return org.jumpserver.chen.framework.policy.QueryPolicyHolder.current().getExportMaxRows();
+    }
+
     // An earlier $limit does not bound the output of later $unwind/$unionWith.
     // Bound retained results independently, without rewriting terminal writes.
     private int aggregateCap(MongoCommand command, int limit) {
         return command.getLimit() != null ? resolveLimit(command.getLimit(), limit)
-                : hasLimitStage(command.getPipeline()) ? (limit < 0 ? EXPORT_MAX : MAX_LIMIT) : resolveLimit(null, limit);
+                : hasLimitStage(command.getPipeline()) ? (limit < 0 ? exportMax() : MAX_LIMIT) : resolveLimit(null, limit);
     }
 
     private SQLQueryResult executeAggregate(MongoCommand command, int limit) {
@@ -345,10 +349,10 @@ public class MongoActuator {
             return commandLimit == 0 ? MAX_LIMIT : Math.min(commandLimit, MAX_LIMIT);
         }
         // consoleLimit < 0 is the DataView "export all" signal; cap it at
-        // EXPORT_MAX rather than collapsing to DEFAULT_LIMIT so exports are
+        // the export maximum rather than collapsing to DEFAULT_LIMIT so exports are
         // not silently truncated to a page, while still bounding memory.
         if (consoleLimit < 0) {
-            return EXPORT_MAX;
+            return exportMax();
         }
         if (consoleLimit > MAX_LIMIT) {
             throw new MongoCommandException("MongoDB console supports at most 1000 rows per load; select 50, 100 or 500, or use export all");

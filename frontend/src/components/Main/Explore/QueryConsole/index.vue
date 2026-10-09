@@ -129,8 +129,10 @@ export default {
     handleWSMessage(pkt) {
       switch (pkt.type) {
         case 'pong':
-          // Server time minus local time, corrected by half the round trip (OBS-09).
-          if (pkt.data && pkt.data.s && pkt.data.t) {
+          // Server time minus local time, corrected by half the round trip (OBS-09). Only short round trips
+          // are trusted: a pong held back by a one-way stall would shift the offset by half the stall and get
+          // fresh commands refused as late until the next heartbeat.
+          if (pkt.data && pkt.data.s && pkt.data.t && Date.now() - pkt.data.t <= 2000) {
             this.clockOffset = pkt.data.s - (pkt.data.t + (Date.now() - pkt.data.t) / 2)
           }
           break

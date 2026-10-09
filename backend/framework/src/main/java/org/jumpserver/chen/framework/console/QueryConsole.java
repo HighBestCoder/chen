@@ -43,6 +43,7 @@ public class QueryConsole extends AbstractConsole {
     private final Datasource datasource;
     private Connection conn;
     private volatile boolean closed;
+    private boolean restoreContext;
     private Integer selectedLimit;
     private volatile SQLExecutePlan currentPlan;
     private StateManager<QueryConsoleState> stateManager;
@@ -108,23 +109,30 @@ public class QueryConsole extends AbstractConsole {
 
     private Connection getConnection() {
         try {
-            boolean lost = false;
             if (this.closed) throw new SQLException("Console is closed");
             if (this.conn != null && this.conn.isClosed()) {
                 // The server ended the connection (admin kill, failover, idle cut). Without this the console and its
                 // result views kept failing with "connection has been closed" until the tab was reopened (LIM-07).
-                lost = true;
                 this.conn = null;
+                this.restoreContext = true;
             }
             if (this.conn == null) {
-                this.conn = this.getDatasource().getConnectionManager().getPhysicalConnection();
-                if (lost) {
+                Connection fresh = this.getDatasource().getConnectionManager().getPhysicalConnection();
+                if (this.restoreContext) {
+                    // Restore the context before the connection is used: if it fails, a later Run must not
+                    // execute on the asset's default database while the console still shows the old one.
                     String context = this.getState().getCurrentContext();
-                    if (context != null && !context.equals(this.getSqlActuator().getCurrentSchema())) {
-                        this.getSqlActuator().changeSchema(context);
+                    try {
+                        SQLActuator actuator = this.getDatasource().getConnectionManager().getSqlActuator().withConnection(fresh);
+                        if (context != null && !context.equals(actuator.getCurrentSchema())) actuator.changeSchema(context);
+                    } catch (SQLException | RuntimeException e) {
+                        try { fresh.close(); } catch (SQLException ignored) { }
+                        throw e;
                     }
+                    this.restoreContext = false;
                     this.getConsoleLogger().warn("Database connection was closed; reconnected (context %s)", context);
                 }
+                this.conn = fresh;
             }
         } catch (SQLException e) {
             throw new RuntimeException(e);
