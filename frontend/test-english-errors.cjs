@@ -19,5 +19,8 @@ for(const locale of ['en-US','zh-CN','zh-Hant','ja-JP']) {
     assert(!/\p{Script=Han}/u.test(messages[group][field]));
   }
 }
+for(const locale of ['zh-CN','zh-Hant'])
+  for(const field of ['title','help','asset','account','cancel','open'])
+    assert.equal(load(locale).instance[field],en.instance[field],locale+': instance.'+field);
 assert.equal(load('zh-CN').button.run,'运行');
 console.log('PASS frontend errors are English across four locales; normal UI labels retain localization');

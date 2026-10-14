@@ -2,12 +2,12 @@ import el from 'element-ui/lib/locale/lang/zh-CN'
 
 const message = {
   instance: {
-    "title": "选择实例 / 新建控制台",
-    "help": "选择已授权的 MongoDB 或 Cosmos DB Mongo API 实例，在新页面打开独立控制台，再选择数据库。当前查询保留。",
-    "asset": "实例",
-    "account": "授权账号",
-    "cancel": "取消",
-    "open": "打开新控制台",
+    "title": "Select instance / New console",
+    "help": "Select an authorized MongoDB or Cosmos DB Mongo API instance. A new page opens with an independent console, where you can select a database. Your current query is preserved.",
+    "asset": "Instance",
+    "account": "Authorized account",
+    "cancel": "Cancel",
+    "open": "Open new console",
     "empty": "No authorized MongoDB / Cosmos DB Mongo API instances available.",
     "no_account": "No account available for direct connection. Use the workbench if credentials or approval are required.",
     "instance_org_required": "Organization context is missing. Reopen from the JumpServer workbench.",
