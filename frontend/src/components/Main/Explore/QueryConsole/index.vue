@@ -1,10 +1,5 @@
 <template>
   <div v-loading="state.loading" class="container">
-    <div v-if="store.getters.profile.dbType === 'mongodb'" class="instance-bar">
-      <span>{{ store.getters.profile.assetName }}</span>
-      <el-button size="mini" @click="instanceDialogVisible = true">{{ $t('instance.title') }}</el-button>
-      <InstanceDialog v-if="instanceDialogVisible" @close="instanceDialogVisible = false" />
-    </div>
     <div class="content">
       <SplitPane :default-percent="40" :min-percent="20" split="horizontal">
         <template slot="paneL">
@@ -36,7 +31,6 @@
 </template>
 
 <script>
-import InstanceDialog from './InstanceDialog.vue'
 import CodeEditor from '@/components/Main/Explore/QueryConsole/CodeEditor.vue'
 import ResultBar from '@/components/Main/Explore/QueryConsole/ResultBar.vue'
 import store from '@/store'
@@ -45,7 +39,7 @@ import Message from '@/components/Main/Explore/Message.vue'
 import SplitPane from 'vue-splitpane'
 
 export default {
-  components: { InstanceDialog, Message, ResultBar, CodeEditor, SplitPane },
+  components: { Message, ResultBar, CodeEditor, SplitPane },
   props: {
     tab: {
       type: Object,
@@ -62,8 +56,6 @@ export default {
   },
   data() {
     return {
-      store,
-      instanceDialogVisible: false,
       heartBeatInterval: 0,
       resultStates: {},
       ws: null,
@@ -209,14 +201,6 @@ export default {
   height: calc(100vh - 30px);
   display: flex;
   flex-direction: column;
-
-  .instance-bar {
-    padding: 4px 8px;
-    color: #FFFFFF;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
 
   .content {
     flex: 1;
