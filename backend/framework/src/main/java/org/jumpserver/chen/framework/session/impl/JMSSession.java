@@ -218,6 +218,11 @@ public class JMSSession extends BaseSession {
     }
 
     @Override
+    public String getOrgId() {
+        return this.jmsSession.getOrgId();
+    }
+
+    @Override
     public synchronized void activeSession(PacketIO packetIO) {
         if (isClosed()) throw new IllegalStateException("Session is closed");
         this.commandHandler = new CommandHandlerImpl(this.jmsSession, this.serviceBlockingStub);

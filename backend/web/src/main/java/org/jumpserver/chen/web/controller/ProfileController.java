@@ -18,6 +18,8 @@ public class ProfileController {
         Profile profile = new Profile();
         profile.setDbType(connectionInfo.getDbType());
         profile.setAssetName(SessionManager.getCurrentSession().getDatasourceName());
+        // The instance dialog lists assets in the session's org, not the Core org cookie.
+        profile.setOrgId(SessionManager.getCurrentSession().getOrgId());
         profile.setCanCopy(SessionManager.getCurrentSession().canCopy());
         profile.setCanPaste(SessionManager.getCurrentSession().canPaste());
         return profile;

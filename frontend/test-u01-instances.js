@@ -25,6 +25,14 @@ async function main() {
   assert(calls.every(c=>c.options.credentials === 'same-origin' && c.options.headers['X-JMS-ORG'] === 'org-A' && !c.options.headers.token))
   assert.strictEqual(a.coreContext('SESSION_COOKIE_NAME_PREFIX=jms_; jms_csrftoken=csrf; X-JMS-ORG=cookie', '?oid=fixed').csrf, 'csrf')
   assert.strictEqual(a.coreContext('X-JMS-ORG=cookie', '?oid=fixed').org, 'fixed')
+  assert.strictEqual(a.coreContext('X-JMS-ORG=org-azure', '', 'org-tencent').org, 'org-tencent')
+  assert.strictEqual(a.coreContext('X-JMS-ORG=org-azure', '?oid=fixed', 'org-tencent').org, 'org-tencent')
+  assert.strictEqual(a.coreContext('X-JMS-ORG=org-azure', '', null).org, 'org-azure')
+  let listed
+  const mounted=dialog({coreContext:(c,s,org)=>({org,csrf:'x'}),getInstances:async ctx=>{listed=ctx.org;return []}})
+  mounted.instance.$store={getters:{profile:{orgId:'org-tencent'}}}
+  await mounted.component.mounted.call(mounted.instance)
+  assert.strictEqual(listed,'org-tencent')
   await assert.rejects(a.getInstances({}), /instance_org_required/)
   for (const status of [401,403,500]) await assert.rejects(api(async()=>({ok:false,status})).createInstanceSession('b','reader',context), /instance_/)
   await assert.rejects(api(async()=>response({results:[],next:'x'})).getInstances(context), /instance_failed/)

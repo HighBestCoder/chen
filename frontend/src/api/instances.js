@@ -1,12 +1,14 @@
 // Use the signed-in Core user, never the Chen service account or Chen session token.
-export function coreContext(cookie = document.cookie, search = window.location.search) {
+// Luna opens Chen without ?oid, and the X-JMS-ORG cookie follows the Core web console,
+// so the current session's org (from the profile) wins over both.
+export function coreContext(cookie = document.cookie, search = window.location.search, sessionOrg = '') {
   const cookies = Object.fromEntries(cookie.split(';').filter(x => x.includes('=')).map(x => {
     const at = x.indexOf('=')
     return [x.slice(0, at).trim(), decodeURIComponent(x.slice(at + 1))]
   }))
   const prefix = cookies.SESSION_COOKIE_NAME_PREFIX
   return {
-    org: new URLSearchParams(search).get('oid') || cookies['X-JMS-ORG'],
+    org: sessionOrg || new URLSearchParams(search).get('oid') || cookies['X-JMS-ORG'],
     csrf: cookies[`${!prefix || prefix === '""' || prefix === "''" ? '' : prefix}csrftoken`]
   }
 }

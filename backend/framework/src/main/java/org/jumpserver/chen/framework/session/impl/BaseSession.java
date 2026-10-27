@@ -115,6 +115,11 @@ public class BaseSession implements Session {
     }
 
     @Override
+    public String getOrgId() {
+        return null;
+    }
+
+    @Override
     public SQLQueryResult withAudit(String command, QueryAuditFunction queryAuditFunction) throws SQLException, CommandRejectException {
         return queryAuditFunction.run();
     }

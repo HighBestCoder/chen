@@ -32,7 +32,7 @@ export default {
   },
   async mounted() {
     try {
-      this.context = coreContext()
+      this.context = coreContext(undefined, undefined, this.$store.getters.profile?.orgId)
       this.assets = await getInstances(this.context)
     } catch (e) { this.showError(e) } finally { this.loading = false }
   },

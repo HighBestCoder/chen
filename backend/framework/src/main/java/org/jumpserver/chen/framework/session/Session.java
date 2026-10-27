@@ -56,6 +56,8 @@ public interface Session {
 
     String getUsername();
 
+    String getOrgId();
+
     void setAttribute(String key, Object value);
 
     void removeAttribute(String key);
