@@ -67,7 +67,8 @@ public final class MongoQueryLoader implements LoadDataInterface {
                 result = actuator.execute(command, params.getOffset(), params.getLimit());
                 if (sink != null && result.isHasResultSet()) {
                     if (result.isTruncated()) {
-                        throw new MongoCommandException(MongoResultTableAdapter.EXPORT_LIMIT_MESSAGE);
+                        // A truncated result holds exactly the cap that applied.
+                        throw new MongoCommandException(MongoResultTableAdapter.exportLimitMessage(result.getData().size()));
                     }
                     sink.begin(result.getFields());
                     for (var row : result.getData()) {

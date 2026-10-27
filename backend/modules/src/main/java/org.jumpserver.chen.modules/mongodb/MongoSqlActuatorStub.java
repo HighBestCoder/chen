@@ -157,7 +157,9 @@ public class MongoSqlActuatorStub implements SQLActuator {
         }
         @Override
         public void generateTargetSQL() {
-            setTargetSQL(getSourceSQL());
+            // Log and audit the command that runs: export-all has no limit(50).
+            SQLQueryParams params = getSqlQueryParams();
+            setTargetSQL(params == null ? getSourceSQL() : commandText(collection, params.getLimit()));
         }
     }
 
@@ -212,7 +214,7 @@ public class MongoSqlActuatorStub implements SQLActuator {
 
         result.setTruncated(params.getLimit() < 0 && truncated);
         if (result.isTruncated() && plan.getRowConsumer() != null) {
-            throw new SQLException(MongoResultTableAdapter.EXPORT_LIMIT_MESSAGE);
+            throw new SQLException(MongoResultTableAdapter.exportLimitMessage(cap));
         }
         streamRowsIfRequested(result, plan.getRowConsumer());
         return result;

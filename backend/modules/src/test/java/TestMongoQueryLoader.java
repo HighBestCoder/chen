@@ -117,7 +117,10 @@ public class TestMongoQueryLoader {
                 public void accept(List<Object> row) { }
             });
             throw new AssertionError("truncated export accepted");
-        } catch (MongoCommandException expected) { }
+        } catch (MongoCommandException expected) {
+            require(expected.getMessage().startsWith("Export exceeds the MongoDB row limit of 1 rows;"),
+                    "limit message must name the cap: " + expected.getMessage());
+        }
         System.out.println("OK: export rows, per-load ACL/audit, original text and database isolation");
     }
 

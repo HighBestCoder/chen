@@ -36,7 +36,7 @@ public class TestMongoStreamingExport {
 
         Sink over = new Sink();
         expectFailure(() -> adapter.export("q", "c", null, cursors(() -> docs, new int[1]), 1, over, 1L),
-                MongoResultTableAdapter.EXPORT_LIMIT_MESSAGE);
+                "Export exceeds the MongoDB row limit of 1 rows;");
         require(over.header == null && over.rows.isEmpty(), "an over-limit export must fail before writing");
 
         int[] changed = {0};

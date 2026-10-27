@@ -27,7 +27,10 @@ public class MongoResultTableAdapter {
     public MongoResultTableAdapter(java.util.function.Consumer<List<Document>> observer) {this.observer=observer;}
 
 
-    public static final String EXPORT_LIMIT_MESSAGE = "Export exceeds the MongoDB row limit; narrow the query before exporting";
+    // Name the limit so users can tell an export cap from a failed query.
+    public static String exportLimitMessage(int cap) {
+        return String.format("Export exceeds the MongoDB row limit of %d rows; narrow the query before exporting", cap);
+    }
 
     private static final JsonWriterSettings RELAXED =
             JsonWriterSettings.builder().outputMode(JsonMode.RELAXED).build();
@@ -111,7 +114,7 @@ public class MongoResultTableAdapter {
             while (cursor.hasNext()) {
                 Document document = cursor.next();
                 if (++count > cap) {
-                    throw new SQLException(EXPORT_LIMIT_MESSAGE);
+                    throw new SQLException(exportLimitMessage(cap));
                 }
                 keys.addAll(document.keySet());
                 document.forEach((key, value) -> {
