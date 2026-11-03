@@ -63,6 +63,6 @@ public class AuthController {
                 }
             }
         }
-        return Locale.CHINA;
+        return Locale.US;
     }
 }

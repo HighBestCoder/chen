@@ -44,7 +44,7 @@ public class BaseSession implements Session {
 
     @Getter
     @Setter
-    private Locale locale = Locale.CHINA;
+    private Locale locale = Locale.US;
 
 
     @Setter
