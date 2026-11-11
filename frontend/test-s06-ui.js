@@ -112,7 +112,16 @@ async function main() {
   await test('Mongo script formatting preserves JavaScript execution semantics', () => {
     const source=fs.readFileSync(path.join(__dirname,'src/utils/mongoFormatter.js'),'utf8').replace('export function','function')
     const ctx={};vm.runInNewContext(source+';this.format=formatMongoCommand',ctx)
-    for(const script of ["let n=1\nn++\nn", "db.c.find({}).map(x=>{return\n{x:1}})", "db.c.find({});\ndb.c.insertOne({x:1})", "const s=`a,b:{x}`;s"]) assert.equal(ctx.format(script),script)
+    for(const script of ["let n=1\nn++\nn", "db.c.find({}).map(x=>{return\n{x:1}})", "db.c.find({});\ndb.c.insertOne({x:1})", "const s=`a,b:{x}`;s", "db.c.find({}); // note"]) assert.equal(ctx.format(script),script)
+  })
+  await test('Mongo formatter formats a statement ending in ; or holding ; or // in strings', () => {
+    const source=fs.readFileSync(path.join(__dirname,'src/utils/mongoFormatter.js'),'utf8').replace('export function','function')
+    const ctx={};vm.runInNewContext(source+';this.format=formatMongoCommand',ctx)
+    assert.equal(ctx.format('db.t.find({"a": "b"});'),'db.t.find({\n  "a": "b"\n});')
+    assert.equal(ctx.format('db.t.find({x:1}) ;\n'),'db.t.find({\n  x: 1\n});')
+    const agg=ctx.format('db.c.aggregate([{$match:{s:"a"}},{$sort:{t:-1}}]);')
+    assert(agg.split('\n').length>8 && agg.endsWith('\n]);'));assert.equal(ctx.format(agg),agg)
+    assert.equal(ctx.format('db.t.find({note:"a;b",u:\'http://x\'})'),'db.t.find({\n  note: "a;b",\n  u: \'http://x\'\n})')
   })
   await test('Mongo formatter preserves regex punctuation and repeated formatting', () => {
     const source=fs.readFileSync(path.join(__dirname,'src/utils/mongoFormatter.js'),'utf8').replace('export function','function')

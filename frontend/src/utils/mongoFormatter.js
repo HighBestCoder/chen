@@ -1,7 +1,22 @@
+// Blank out the contents of '...' and "..." literals so script markers that
+// only appear inside a string value (e.g. "a;b", "http://x") are ignored.
+function codeOutsideStrings(command) {
+  return command.replace(/(["'])(?:\\[\s\S]|(?!\1)[^\\])*(?:\1|$)/g, '""')
+}
+
 export function formatMongoCommand(command) {
   // This formatter handles BSON command literals. Preserve general JavaScript
   // verbatim: rewriting newlines can change automatic semicolon insertion.
-  if (!/^\s*db\./.test(command) || /[;`]|=>|\bfunction\b|\/\/|\/\*/.test(command)) return command
+  // A single trailing ';' ends one statement, so it is not a script marker:
+  // format the statement before it and put the ';' back afterwards.
+  const trailingSemicolon = /;\s*$/.test(codeOutsideStrings(command))
+  const body = trailingSemicolon ? command.replace(/;\s*$/, '') : command
+  const code = codeOutsideStrings(body)
+  if (!/^\s*db\./.test(code) || /[;`]|=>|\bfunction\b|\/\/|\/\*/.test(code)) return command
+  return formatStatement(body) + (trailingSemicolon ? ';' : '')
+}
+
+function formatStatement(command) {
   let formatted = ''
   let indent = 0
   let inString = false
