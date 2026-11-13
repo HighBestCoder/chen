@@ -28,8 +28,28 @@ public class CommandHandlerImpl implements CommandHandler {
         event.put("org_id", session.getOrgId()); event.put("asset", session.getAsset());
         event.put("account", session.getAccount()); event.put("user", session.getUser());
         event.put("timestamp", record.getTimestamp()); event.put("input", record.getInput());
-        event.put("output", output); event.put("risk_level", record.getRiskLevel().getNumber());
+        event.put("output", output); event.put("risk_level", coreRiskLevel(record.getRiskLevel()));
         return event;
+    }
+
+    /**
+     * Core stores RiskLevelChoices values (accept=0, warning=4, reject=5,
+     * review_reject=6, review_accept=7, review_cancel=8), not the wisp proto
+     * numbers. The gRPC path is converted by wisp; the direct outbox path
+     * must convert here, or a reject lands as 2 and shows as "2".
+     */
+    public static int coreRiskLevel(Common.RiskLevel level) {
+        if (level == null) return 0;
+        return switch (level) {
+            case Normal -> 0;
+            case Warning -> 4;
+            case Reject -> 5;
+            case ReviewReject -> 6;
+            case ReviewAccept -> 7;
+            case ReviewCancel -> 8;
+            // ACLResult.allows() denies UNRECOGNIZED; audit it as a reject.
+            default -> 5;
+        };
     }
 
     @Override
